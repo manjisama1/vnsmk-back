@@ -1,0 +1,41 @@
+[
+  {
+    "id": 1,
+    "category": "Getting Started",
+    "question": "How do I connect my WhatsApp to the Vinsmoke bot?",
+    "answer": "You can connect your WhatsApp using either red`QR code scanning` or blue`pairing code method`. Go to the Session page and choose your preferred method. For QR code, simply scan the generated code with your WhatsApp app.",
+    "tags": [
+      "connection",
+      "setup",
+      "whatsapp"
+    ],
+    "createdAt": "2025-10-29T06:34:19.271Z",
+    "updatedAt": "2025-10-29T06:34:19.271Z"
+  },
+  {
+    "id": 2,
+    "category": "Security",
+    "question": "Is my data secure with Vinsmoke bot?",
+    "answer": "Yes, absolutely! All sessions are yellow`end-to-end encrypted` and stored securely on our servers. We use green`industry-standard encryption protocols` and don't have access to your personal messages or data.",
+    "tags": [
+      "security",
+      "privacy",
+      "data"
+    ],
+    "createdAt": "2025-10-29T06:34:19.271Z",
+    "updatedAt": "2025-10-29T06:34:19.271Z"
+  },
+  {
+    "id": 3,
+    "category": "Features",
+    "question": "What highlighting colors are available?",
+    "answer": "You can use multiple colors for highlighting: red`important alerts`, blue`information notes`, yellow`warnings`, green`success messages`, purple`special features`, and orange`tips and tricks`. All highlights have rounded corners and proper spacing!",
+    "tags": [
+      "highlighting",
+      "colors",
+      "formatting"
+    ],
+    "createdAt": "2025-10-29T06:45:00.000Z",
+    "updatedAt": "2025-10-29T06:45:00.000Z"
+  }
+]
