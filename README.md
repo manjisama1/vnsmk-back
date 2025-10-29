@@ -80,43 +80,28 @@ await syncSessionFiles('your-session-id');
 
 ## ⚙️ Environment Variables
 
-### 🔧 **Minimal Setup (Required)**
+## ⚙️ Environment Variables
+
+### 🎯 **For Render Deployment (Only 1 Required!)**
 ```bash
-NODE_ENV=production                           # Environment mode
-FRONTEND_URL=https://your-app.vercel.app     # Your deployed frontend URL
+FRONTEND_URL=https://your-frontend.vercel.app
 ```
 
-### 🌐 **CORS Configuration Examples**
+### 🔐 **Required: Admin Authentication**
 ```bash
-# Single frontend (most common)
-FRONTEND_URL=https://vnsmk-front.vercel.app
-
-# Multiple domains
-FRONTEND_URL=https://vnsmk-front.vercel.app
-ALLOWED_ORIGINS=https://your-custom-domain.com,https://www.your-domain.com
-
-# Different platforms
-FRONTEND_URL=https://your-project.netlify.app    # Netlify
-FRONTEND_URL=https://username.github.io/repo     # GitHub Pages
-FRONTEND_URL=https://your-domain.com             # Custom domain
+GITHUB_CLIENT_ID=your_client_id       # For admin login
+GITHUB_CLIENT_SECRET=your_secret      # For admin login
 ```
 
-### ⚙️ **Optional Configuration**
-```bash
-PORT=8080                             # Server port (auto-detected on most platforms)
-TRUST_PROXY=true                      # Enable if behind load balancer
-REQUEST_TIMEOUT=30000                 # Request timeout (30s)
-MAX_REQUEST_SIZE=10mb                 # Max request body size
-RATE_LIMIT_WINDOW=900000             # Rate limit window (15min)
-RATE_LIMIT_MAX=100                   # Max requests per window
-```
+**That's it!** Everything else (PORT, NODE_ENV, CORS, security, rate limiting, etc.) has smart defaults and is handled automatically by Render.
 
-### 🔐 **Admin Features (Optional)**
-```bash
-GITHUB_CLIENT_ID=your_client_id       # For admin authentication
-GITHUB_CLIENT_SECRET=your_secret      # For admin authentication
-BACKEND_URL=https://your-backend.com  # For OAuth callbacks
-```
+### 🎯 **Render Deployment Steps:**
+1. Connect your GitHub repo to Render
+2. Set these 3 environment variables:
+   - `FRONTEND_URL=https://your-frontend.vercel.app`
+   - `GITHUB_CLIENT_ID=your_github_client_id`
+   - `GITHUB_CLIENT_SECRET=your_github_client_secret`
+3. Deploy! ✨
 
 ## 🚀 Deployment Options
 

@@ -43,23 +43,23 @@ curl http://localhost:8080/api/health  # Should return OK
 ### Step 3: Environment Variables
 Set these in Render dashboard under "Environment":
 
-#### Required Variables
+#### Required Variables (Only 3!)
 ```bash
-NODE_ENV=production
-FRONTEND_URL=https://your-frontend-domain.vercel.app
+FRONTEND_URL=https://your-frontend.vercel.app
+GITHUB_CLIENT_ID=your_github_client_id
+GITHUB_CLIENT_SECRET=your_github_client_secret
 ```
 
-#### CORS Configuration Examples
+**That's it!** NODE_ENV, PORT, CORS, security settings, etc. are all handled automatically.
+
+#### Examples
 ```bash
-# After deploying frontend to Vercel, you'll get a URL like:
+# After deploying frontend to Vercel:
 FRONTEND_URL=https://vnsmk-front-abc123.vercel.app
 
-# For custom domains:
-FRONTEND_URL=https://your-custom-domain.com
-
-# For multiple domains:
-FRONTEND_URL=https://your-main-domain.com
-ALLOWED_ORIGINS=https://staging.your-domain.com,https://www.your-domain.com
+# GitHub OAuth (get from GitHub Developer Settings):
+GITHUB_CLIENT_ID=Iv1.a1b2c3d4e5f6g7h8
+GITHUB_CLIENT_SECRET=a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0
 ```
 
 #### Security & Performance (Recommended)

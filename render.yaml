@@ -5,9 +5,4 @@ services:
     plan: free
     buildCommand: npm ci --only=production
     startCommand: node server.js
-    envVars:
-      - key: NODE_ENV
-        value: production
-      - key: TRUST_PROXY
-        value: "true"
     healthCheckPath: /api/health

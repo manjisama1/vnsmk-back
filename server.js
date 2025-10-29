@@ -14,10 +14,8 @@ const { isAdmin } = require('./config/admin');
 
 const app = express();
 
-// Trust proxy for production deployments (Render, Heroku, etc.)
-if (process.env.TRUST_PROXY === 'true') {
-  app.set('trust proxy', 1);
-}
+// Trust proxy for production deployments (always enabled for cloud platforms)
+app.set('trust proxy', 1);
 
 // Security middleware
 const helmet = require('helmet');
@@ -33,10 +31,10 @@ app.use(helmet({
 // Compress responses
 app.use(compression());
 
-// Rate limiting
+// Rate limiting (smart defaults)
 const limiter = rateLimit({
-  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW) || 15 * 60 * 1000, // 15 minutes
-  max: parseInt(process.env.RATE_LIMIT_MAX) || 100, // limit each IP to 100 requests per windowMs
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // 100 requests per 15 minutes
   message: {
     error: 'Too many requests from this IP, please try again later.',
     retryAfter: '15 minutes'
@@ -65,7 +63,7 @@ const corsOptions = {
   origin: function (origin, callback) {
     // Always allow requests with no origin (mobile apps, curl, etc.)
     if (!origin) return callback(null, true);
-    
+
     // Development origins (always allowed in development)
     const devOrigins = [
       'http://localhost:3000',
@@ -73,56 +71,56 @@ const corsOptions = {
       'http://127.0.0.1:3000',
       'http://127.0.0.1:3001'
     ];
-    
+
     // Production origins from environment variables (PRIORITY)
     const envOrigins = [];
-    
+
     // Primary frontend URL
     if (process.env.FRONTEND_URL) {
       envOrigins.push(process.env.FRONTEND_URL);
       console.log(`🌐 Primary frontend URL: ${process.env.FRONTEND_URL}`);
     }
-    
+
     // Additional allowed origins (comma-separated)
     if (process.env.ALLOWED_ORIGINS) {
       const additionalOrigins = process.env.ALLOWED_ORIGINS.split(',').map(url => url.trim()).filter(Boolean);
       envOrigins.push(...additionalOrigins);
       console.log(`🌐 Additional origins: ${additionalOrigins.join(', ')}`);
     }
-    
+
     // Combine all explicitly allowed origins
-    const explicitOrigins = process.env.NODE_ENV === 'production' 
+    const explicitOrigins = process.env.NODE_ENV === 'production'
       ? [...envOrigins] // Production: Only use environment variables
       : [...devOrigins, ...envOrigins]; // Development: Include localhost + env vars
-    
+
     // Check explicit origins first (highest priority)
     if (explicitOrigins.includes(origin)) {
       console.log(`✅ CORS allowed (explicit): ${origin}`);
       return callback(null, true);
     }
-    
+
     // Fallback: Allow common deployment platforms (only if no env vars set)
     if (envOrigins.length === 0) {
-      const isDeploymentPlatform = 
+      const isDeploymentPlatform =
         origin.endsWith('.vercel.app') ||
         origin.endsWith('.netlify.app') ||
         origin.endsWith('.github.io') ||
         origin.endsWith('.herokuapp.com') ||
         origin.endsWith('.railway.app');
-      
+
       if (isDeploymentPlatform) {
         console.log(`✅ CORS allowed (platform): ${origin}`);
         return callback(null, true);
       }
     }
-    
+
     // Block all other origins
     console.warn(`🚫 CORS blocked origin: ${origin}`);
     console.log(`🔧 To allow this origin, set environment variables:`);
     console.log(`   FRONTEND_URL=${origin}`);
     console.log(`   or add to ALLOWED_ORIGINS=${origin}`);
     console.log(`✅ Currently allowed: ${explicitOrigins.join(', ') || 'None (using platform fallbacks)'}`);
-    
+
     callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
@@ -133,19 +131,19 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-// Body parsing middleware with limits
-app.use(express.json({ 
-  limit: process.env.MAX_REQUEST_SIZE || '10mb',
+// Body parsing middleware (smart defaults)
+app.use(express.json({
+  limit: '10mb',
   strict: true
 }));
-app.use(express.urlencoded({ 
-  extended: true, 
-  limit: process.env.MAX_REQUEST_SIZE || '10mb' 
+app.use(express.urlencoded({
+  extended: true,
+  limit: '10mb'
 }));
 
-// Request timeout
+// Request timeout (30 seconds)
 app.use((req, res, next) => {
-  req.setTimeout(parseInt(process.env.REQUEST_TIMEOUT) || 30000);
+  req.setTimeout(30000);
   next();
 });
 
@@ -160,7 +158,9 @@ const faqService = new FAQService();
 // GitHub OAuth Routes
 app.get('/auth/github', (req, res) => {
   const clientId = process.env.GITHUB_CLIENT_ID;
-  const redirectUri = encodeURIComponent(`${process.env.BACKEND_URL || 'http://localhost:5000'}/auth/callback`);
+  // Auto-detect backend URL from request
+  const backendUrl = `${req.protocol}://${req.get('host')}`;
+  const redirectUri = encodeURIComponent(`${backendUrl}/auth/callback`);
   const scope = encodeURIComponent('read:user user:email');
   const state = req.query.state; // Get state parameter from frontend
 
@@ -398,7 +398,7 @@ app.get('/api/session/:sessionId/file/:fileName', async (req, res) => {
     // Set appropriate headers
     res.setHeader('Content-Type', 'application/octet-stream');
     res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
-    
+
     // Send the raw file buffer
     res.send(fileData.buffer);
   } catch (error) {
@@ -1017,7 +1017,7 @@ app.get('*', (req, res) => {
   if (req.path.startsWith('/api/') || req.path.startsWith('/socket.io/')) {
     return res.status(404).json({ error: 'API endpoint not found' });
   }
-  
+
   // For non-API routes, return API info
   res.json({
     name: 'Vinsmoke Bot Backend API',
@@ -1065,16 +1065,37 @@ server.listen(PORT, HOST, () => {
   console.log(`🚀 Vinsmoke Bot Backend v1.0.0`);
   console.log(`🌐 Server running on ${HOST}:${PORT}`);
   console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`📱 WhatsApp Service: ✅ Initialized`);
-  console.log(`🔌 Plugin Service: ✅ Initialized`);
-  console.log(`🛡️  Security: ✅ Enabled`);
-  console.log(`⚡ Compression: ✅ Enabled`);
-  console.log(`🚦 Rate Limiting: ✅ Enabled`);
   console.log(`📊 Health Check: /api/health`);
+  console.log(``);
   
-  if (process.env.NODE_ENV === 'production') {
-    console.log(`🔒 Production mode: Security enhanced`);
+  // Configuration status
+  console.log(`⚙️  Configuration:`);
+  console.log(`   📱 WhatsApp Service: ✅ Ready`);
+  console.log(`   🔌 Plugin Service: ✅ Ready`);
+  console.log(`   🛡️  Security & Rate Limiting: ✅ Enabled`);
+  console.log(`   ⚡ Compression: ✅ Enabled`);
+  
+  // CORS status
+  if (process.env.FRONTEND_URL) {
+    console.log(`   🌐 CORS: ✅ Frontend URL configured`);
+    console.log(`      Frontend: ${process.env.FRONTEND_URL}`);
   } else {
-    console.log(`🔧 Development mode: Debug enabled`);
+    console.log(`   🌐 CORS: ⚠️  Using platform fallbacks (*.vercel.app, *.netlify.app)`);
+    console.log(`      💡 Set FRONTEND_URL for better security`);
+  }
+  
+  // GitHub OAuth status
+  if (process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET) {
+    console.log(`   🔐 GitHub OAuth: ✅ Configured (Admin features enabled)`);
+  } else {
+    console.log(`   🔐 GitHub OAuth: ⚠️  Not configured (Admin features disabled)`);
+    console.log(`      💡 Set GITHUB_CLIENT_ID & GITHUB_CLIENT_SECRET for admin access`);
+  }
+  
+  console.log(``);
+  if (process.env.NODE_ENV === 'production') {
+    console.log(`🔒 Production mode: All optimizations enabled`);
+  } else {
+    console.log(`🔧 Development mode: Debug logging enabled`);
   }
 });
