@@ -31,13 +31,13 @@ app.use(helmet({
 // Compress responses
 app.use(compression());
 
-// Rate limiting (smart defaults)
+// Rate limiting (configurable via environment)
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // 100 requests per 15 minutes
+  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW) || 15 * 60 * 1000, // 15 minutes
+  max: parseInt(process.env.RATE_LIMIT_MAX) || 100, // 100 requests per window
   message: {
     error: 'Too many requests from this IP, please try again later.',
-    retryAfter: '15 minutes'
+    retryAfter: Math.ceil((parseInt(process.env.RATE_LIMIT_WINDOW) || 15 * 60 * 1000) / 60000) + ' minutes'
   },
   standardHeaders: true,
   legacyHeaders: false,
@@ -99,17 +99,22 @@ const corsOptions = {
       return callback(null, true);
     }
 
-    // Fallback: Allow common deployment platforms (only if no env vars set)
-    if (envOrigins.length === 0) {
+    // Production: Only allow explicitly configured origins (no platform fallbacks)
+    // This ensures ONLY your frontend can access the API
+    if (process.env.NODE_ENV === 'production' && envOrigins.length === 0) {
+      console.warn(`🚫 CORS: No FRONTEND_URL configured in production!`);
+      console.log(`🔧 Set FRONTEND_URL environment variable for security`);
+    }
+    
+    // Development fallback: Allow common platforms only in development
+    if (process.env.NODE_ENV !== 'production' && envOrigins.length === 0) {
       const isDeploymentPlatform =
         origin.endsWith('.vercel.app') ||
         origin.endsWith('.netlify.app') ||
-        origin.endsWith('.github.io') ||
-        origin.endsWith('.herokuapp.com') ||
-        origin.endsWith('.railway.app');
+        origin.endsWith('.github.io');
 
       if (isDeploymentPlatform) {
-        console.log(`✅ CORS allowed (platform): ${origin}`);
+        console.log(`✅ CORS allowed (dev platform): ${origin}`);
         return callback(null, true);
       }
     }
@@ -152,14 +157,27 @@ const whatsappService = new WhatsAppService(io);
 const pluginService = new PluginService();
 const faqService = new FAQService();
 
-// WhatsApp service initialized - no existing sessions to initialize
-// Sessions are created on-demand and auto-cleaned after 24h
+// Initialize all services
+async function initializeServices() {
+  console.log('🔄 Initializing services...');
+  await Promise.all([
+    whatsappService.initPromise,
+    pluginService.initPromise,
+    faqService.initPromise
+  ]);
+  console.log('✅ All services initialized');
+}
+
+// Initialize services (don't wait, let them initialize in background)
+initializeServices().catch(error => {
+  console.error('❌ Service initialization failed:', error);
+});
 
 // GitHub OAuth Routes
 app.get('/auth/github', (req, res) => {
   const clientId = process.env.GITHUB_CLIENT_ID;
-  // Auto-detect backend URL from request
-  const backendUrl = `${req.protocol}://${req.get('host')}`;
+  // Use configured backend URL or auto-detect
+  const backendUrl = process.env.BACKEND_URL || `${req.protocol}://${req.get('host')}`;
   const redirectUri = encodeURIComponent(`${backendUrl}/auth/callback`);
   const scope = encodeURIComponent('read:user user:email');
   const state = req.query.state; // Get state parameter from frontend
@@ -1087,10 +1105,21 @@ server.listen(PORT, HOST, () => {
   // GitHub OAuth status
   if (process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET) {
     console.log(`   🔐 GitHub OAuth: ✅ Configured (Admin features enabled)`);
+    if (process.env.BACKEND_URL) {
+      console.log(`      Redirect URI: ${process.env.BACKEND_URL}/auth/callback`);
+    } else {
+      console.log(`      ⚠️  BACKEND_URL not set - using auto-detection`);
+    }
   } else {
     console.log(`   🔐 GitHub OAuth: ⚠️  Not configured (Admin features disabled)`);
-    console.log(`      💡 Set GITHUB_CLIENT_ID & GITHUB_CLIENT_SECRET for admin access`);
+    console.log(`      💡 Set GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET & BACKEND_URL`);
   }
+  
+  // Advanced configuration
+  const sessionTimeout = parseInt(process.env.SESSION_TIMEOUT) || 3600000;
+  const maxSessions = parseInt(process.env.MAX_SESSIONS) || 100;
+  const pluginCacheTTL = parseInt(process.env.PLUGIN_CACHE_TTL) || 300000;
+  console.log(`   ⚙️  Advanced: Sessions(${maxSessions}), Timeout(${Math.round(sessionTimeout/60000)}min), Cache(${Math.round(pluginCacheTTL/1000)}s)`);
   
   console.log(``);
   if (process.env.NODE_ENV === 'production') {

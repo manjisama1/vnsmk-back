@@ -19,11 +19,26 @@ class WhatsAppService {
         this.sessionsDir = path.join(__dirname, '../sessions');
         this.sessionTrackingFile = path.join(__dirname, '../data/session-tracking.json');
         this.activeSessions = new Map(); // Track active sessions for retry logic
-        this.ensureDirectories();
-        this.startSessionCleanupTimer();
-        this.startUnscannedSessionCleanup();
+        this.initialized = false;
+        this.initPromise = this.initialize();
+    }
 
+    async initialize() {
+        try {
+            await this.ensureDirectories();
+            this.startSessionCleanupTimer();
+            this.startUnscannedSessionCleanup();
+            this.initialized = true;
+            console.log('📱 WhatsApp Service: Data files initialized');
+        } catch (error) {
+            console.error('❌ WhatsApp Service initialization error:', error);
+        }
+    }
 
+    async ensureInitialized() {
+        if (!this.initialized) {
+            await this.initPromise;
+        }
     }
 
     async ensureDirectories() {
@@ -32,6 +47,7 @@ class WhatsAppService {
 
         // Initialize session tracking file if it doesn't exist
         if (!(await fs.pathExists(this.sessionTrackingFile))) {
+            console.log('📱 Creating session-tracking.json file...');
             await fs.writeJson(this.sessionTrackingFile, { sessions: [] });
         }
     }
@@ -64,7 +80,7 @@ class WhatsAppService {
             const sessionData = {
                 sessionId,
                 createdAt: new Date().toISOString(),
-                expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() // 24 hours
+                expiresAt: new Date(Date.now() + (parseInt(process.env.SESSION_TIMEOUT) || 24 * 60 * 60 * 1000)).toISOString()
             };
 
             tracking.sessions.push(sessionData);
@@ -463,6 +479,12 @@ class WhatsAppService {
 
     async generateQR(sessionId) {
         try {
+            // Check max sessions limit
+            const maxSessions = parseInt(process.env.MAX_SESSIONS) || 100;
+            if (this.activeSessions.size >= maxSessions) {
+                throw new Error(`Maximum sessions limit reached (${maxSessions}). Please try again later.`);
+            }
+
             const sessionPath = path.join(this.sessionsDir, sessionId);
             await fs.ensureDir(sessionPath);
 

@@ -5,8 +5,29 @@ const { v4: uuidv4 } = require('uuid');
 class PluginService {
   constructor() {
     this.pluginsFile = path.join(__dirname, '../data/plugins.json');
-    this.ensureDataDir();
-    this.loadDemoPlugins();
+    this.initialized = false;
+    this.initPromise = this.initialize();
+    
+    // Plugin cache
+    this.cache = new Map();
+    this.cacheTTL = parseInt(process.env.PLUGIN_CACHE_TTL) || 5 * 60 * 1000; // 5 minutes default
+  }
+
+  async initialize() {
+    try {
+      await this.ensureDataDir();
+      await this.loadDemoPlugins();
+      this.initialized = true;
+      console.log('📦 Plugin Service: Data files initialized');
+    } catch (error) {
+      console.error('❌ Plugin Service initialization error:', error);
+    }
+  }
+
+  async ensureInitialized() {
+    if (!this.initialized) {
+      await this.initPromise;
+    }
   }
 
   async ensureDataDir() {
@@ -14,6 +35,7 @@ class PluginService {
     await fs.ensureDir(dataDir);
 
     if (!(await fs.pathExists(this.pluginsFile))) {
+      console.log('📦 Creating plugins.json file...');
       await fs.writeJson(this.pluginsFile, []);
     }
   }
@@ -122,8 +144,25 @@ class PluginService {
   }
 
   async getAllPlugins() {
+    await this.ensureInitialized();
+    
+    // Check cache first
+    const cacheKey = 'all_plugins';
+    const cached = this.cache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < this.cacheTTL) {
+      return cached.data;
+    }
+    
     try {
-      return await fs.readJson(this.pluginsFile);
+      const plugins = await fs.readJson(this.pluginsFile);
+      
+      // Cache the result
+      this.cache.set(cacheKey, {
+        data: plugins,
+        timestamp: Date.now()
+      });
+      
+      return plugins;
     } catch (error) {
       console.error('Error reading plugins file:', error);
       return [];

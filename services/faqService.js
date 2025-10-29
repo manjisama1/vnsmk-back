@@ -5,7 +5,24 @@ const { v4: uuidv4 } = require('uuid');
 class FAQService {
   constructor() {
     this.faqFile = path.join(__dirname, '../data/faqs.json');
-    this.ensureDataDir();
+    this.initialized = false;
+    this.initPromise = this.initialize();
+  }
+
+  async initialize() {
+    try {
+      await this.ensureDataDir();
+      this.initialized = true;
+      console.log('❓ FAQ Service: Data files initialized');
+    } catch (error) {
+      console.error('❌ FAQ Service initialization error:', error);
+    }
+  }
+
+  async ensureInitialized() {
+    if (!this.initialized) {
+      await this.initPromise;
+    }
   }
 
   async ensureDataDir() {
@@ -13,6 +30,7 @@ class FAQService {
     await fs.ensureDir(dataDir);
 
     if (!(await fs.pathExists(this.faqFile))) {
+      console.log('❓ Creating faqs.json file...');
       // Initialize with some default FAQs
       const defaultFAQs = [
         {
@@ -39,6 +57,7 @@ class FAQService {
   }
 
   async getAllFAQs() {
+    await this.ensureInitialized();
     try {
       return await fs.readJson(this.faqFile);
     } catch (error) {

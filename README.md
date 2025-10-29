@@ -123,10 +123,27 @@ GITHUB_CLIENT_SECRET=your_secret      # For admin login
 - Best for API-only deployments
 
 ### 🚀 **Quick Deploy Steps**
+
+#### 1. Setup GitHub OAuth App
+1. Go to GitHub → Settings → Developer settings → OAuth Apps
+2. Click "New OAuth App"
+3. Fill in:
+   - **Application name**: `Vinsmoke Bot Admin`
+   - **Homepage URL**: `https://your-frontend.vercel.app`
+   - **Authorization callback URL**: `https://your-backend.onrender.com/auth/callback`
+4. Save and copy the Client ID and Client Secret
+
+#### 2. Deploy to Render
 1. **Fork/Clone**: https://github.com/manjisama1/vnsmk-back
-2. **Choose Platform**: Connect your GitHub repo
-3. **Set Variables**: `NODE_ENV=production` + `FRONTEND_URL`
-4. **Deploy**: Platform handles the rest automatically
+2. **Connect to Render**: Import your GitHub repo
+3. **Set Environment Variables**:
+   ```bash
+   FRONTEND_URL=https://your-frontend.vercel.app
+   BACKEND_URL=https://your-backend.onrender.com
+   GITHUB_CLIENT_ID=your_client_id_from_step_1
+   GITHUB_CLIENT_SECRET=your_client_secret_from_step_1
+   ```
+4. **Deploy**: Render handles the rest automatically
 
 ### ⚙️ **Manual Configuration**
 If not using config files, set these build settings:
