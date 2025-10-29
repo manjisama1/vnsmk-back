@@ -75,16 +75,35 @@ const corsOptions = {
     // Production origins from environment variables (PRIORITY)
     const envOrigins = [];
 
-    // Primary frontend URL
+    // Primary frontend URL (handle both with and without trailing slash)
     if (process.env.FRONTEND_URL) {
-      envOrigins.push(process.env.FRONTEND_URL);
-      console.log(`🌐 Primary frontend URL: ${process.env.FRONTEND_URL}`);
+      const frontendUrl = process.env.FRONTEND_URL;
+      envOrigins.push(frontendUrl);
+      
+      // Also add the variant (with/without trailing slash)
+      if (frontendUrl.endsWith('/')) {
+        envOrigins.push(frontendUrl.slice(0, -1)); // Remove trailing slash
+      } else {
+        envOrigins.push(frontendUrl + '/'); // Add trailing slash
+      }
+      
+      console.log(`🌐 Primary frontend URL: ${frontendUrl}`);
     }
 
-    // Additional allowed origins (comma-separated)
+    // Additional allowed origins (comma-separated, handle trailing slashes)
     if (process.env.ALLOWED_ORIGINS) {
       const additionalOrigins = process.env.ALLOWED_ORIGINS.split(',').map(url => url.trim()).filter(Boolean);
-      envOrigins.push(...additionalOrigins);
+      
+      // Add both variants (with and without trailing slash) for each origin
+      additionalOrigins.forEach(origin => {
+        envOrigins.push(origin);
+        if (origin.endsWith('/')) {
+          envOrigins.push(origin.slice(0, -1)); // Remove trailing slash
+        } else {
+          envOrigins.push(origin + '/'); // Add trailing slash
+        }
+      });
+      
       console.log(`🌐 Additional origins: ${additionalOrigins.join(', ')}`);
     }
 
@@ -124,7 +143,13 @@ const corsOptions = {
     console.log(`🔧 To allow this origin, set environment variables:`);
     console.log(`   FRONTEND_URL=${origin}`);
     console.log(`   or add to ALLOWED_ORIGINS=${origin}`);
-    console.log(`✅ Currently allowed: ${explicitOrigins.join(', ') || 'None (using platform fallbacks)'}`);
+    console.log(`✅ Currently allowed origins:`);
+    explicitOrigins.forEach(allowedOrigin => {
+      console.log(`   - ${allowedOrigin}`);
+    });
+    if (explicitOrigins.length === 0) {
+      console.log(`   - None (using platform fallbacks in development)`);
+    }
 
     callback(new Error('Not allowed by CORS'));
   },

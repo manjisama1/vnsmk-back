@@ -16,9 +16,8 @@ class PluginService {
   async initialize() {
     try {
       await this.ensureDataDir();
-      await this.loadDemoPlugins();
       this.initialized = true;
-      console.log('📦 Plugin Service: Data files initialized');
+      console.log('📦 Plugin Service: Production ready');
     } catch (error) {
       console.error('❌ Plugin Service initialization error:', error);
     }

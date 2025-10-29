@@ -1,24 +1,47 @@
 // Admin Configuration for Backend
-// Change this to your GitHub username to grant admin access
+// Configure admin users via environment variables for production security
 
 const ADMIN_CONFIG = {
-  // Your GitHub username (case-sensitive)
-  adminUsername: 'manjisama1',
+  // Get admin user IDs from environment variable (comma-separated)
+  // Primary: Use GitHub user IDs (more secure, never change)
+  // Example: ADMIN_USER_IDS=111729787,987654321
+  adminUserIds: process.env.ADMIN_USER_IDS 
+    ? process.env.ADMIN_USER_IDS.split(',').map(id => id.trim()).filter(Boolean)
+    : [], // Empty array in production if not configured
 
-  // Optional: Add multiple admin usernames
-  adminUsernames: [
-    'manjisama1',
-    // Add more admin usernames here if needed
-    // 'another-admin-username',
-  ],
+  // Fallback: Use GitHub usernames (can change, less secure)
+  // Example: ADMIN_USERS=manjisama1,another-admin
+  adminUsernames: process.env.ADMIN_USERS 
+    ? process.env.ADMIN_USERS.split(',').map(username => username.trim()).filter(Boolean)
+    : [], // Empty array in production if not configured
 };
 
 // Helper function to check if a user is admin
 const isAdmin = (user) => {
-  if (!user || !user.login) return false;
+  if (!user) return false;
 
-  // Check if user is in admin list
-  return ADMIN_CONFIG.adminUsernames.includes(user.login);
+  // Primary check: User ID (most secure, never changes)
+  if (user.id && ADMIN_CONFIG.adminUserIds.length > 0) {
+    const isAdminById = ADMIN_CONFIG.adminUserIds.includes(user.id.toString());
+    if (isAdminById) {
+      console.log(`✅ Admin access granted by ID: ${user.id} (${user.login})`);
+      return true;
+    }
+  }
+
+  // Fallback check: Username (less secure, can change)
+  if (user.login && ADMIN_CONFIG.adminUsernames.length > 0) {
+    const isAdminByUsername = ADMIN_CONFIG.adminUsernames.includes(user.login);
+    if (isAdminByUsername) {
+      console.log(`✅ Admin access granted by username: ${user.login} (ID: ${user.id})`);
+      console.log(`💡 Consider using ADMIN_USER_IDS=${user.id} for better security`);
+      return true;
+    }
+  }
+
+  // No admin access
+  console.log(`🚫 Admin access denied: ${user.login} (ID: ${user.id})`);
+  return false;
 };
 
 module.exports = {

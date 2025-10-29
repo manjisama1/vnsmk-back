@@ -43,14 +43,28 @@ curl http://localhost:8080/api/health  # Should return OK
 ### Step 3: Environment Variables
 Set these in Render dashboard under "Environment":
 
-#### Required Variables (Only 3!)
+#### Required Variables (Only 4!)
 ```bash
 FRONTEND_URL=https://your-frontend.vercel.app
 GITHUB_CLIENT_ID=your_github_client_id
 GITHUB_CLIENT_SECRET=your_github_client_secret
+ADMIN_USER_IDS=111729787
 ```
 
 **That's it!** NODE_ENV, PORT, CORS, security settings, etc. are all handled automatically.
+
+#### 🔍 How to Find Your GitHub User ID
+```bash
+# Method 1: GitHub API
+curl https://api.github.com/users/your-username
+
+# Method 2: Check your profile URL
+# Visit: https://github.com/your-username
+# Your ID is in the page source or use browser dev tools
+
+# Method 3: Use the admin panel
+# After first login, your ID will be logged in the backend console
+```
 
 #### Examples
 ```bash
@@ -72,11 +86,15 @@ RATE_LIMIT_MAX=100
 LOG_LEVEL=info
 ```
 
-#### OAuth (Optional - for admin features)
+#### OAuth & Admin (Required for admin features)
 ```bash
 GITHUB_CLIENT_ID=your_github_client_id
 GITHUB_CLIENT_SECRET=your_github_client_secret
 BACKEND_URL=https://your-backend.onrender.com
+ADMIN_USER_IDS=111729787,987654321
+
+# Fallback method (less secure):
+# ADMIN_USERS=your-github-username,another-admin-username
 ```
 
 ### Step 4: Deploy & Verify
