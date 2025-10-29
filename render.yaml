@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: vinsmoke-bot-backend
+    env: node
+    plan: starter
+    region: oregon
+    buildCommand: npm ci --only=production
+    startCommand: node server.js
+    numInstances: 1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        fromService:
+          type: web
+          name: vinsmoke-bot-backend
+          property: port
+      - key: TRUST_PROXY
+        value: "true"
+      - key: LOG_LEVEL
+        value: info
+      - key: REQUEST_TIMEOUT
+        value: "30000"
+      - key: MAX_REQUEST_SIZE
+        value: 10mb
+    healthCheckPath: /api/health
+    autoDeploy: true
+    preDeployCommand: echo "Starting deployment..."
+    postDeployCommand: echo "Deployment completed successfully"

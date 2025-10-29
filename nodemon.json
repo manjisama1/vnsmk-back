@@ -1,0 +1,14 @@
+{
+  "watch": [
+    "server.js",
+    "services/*.js"
+  ],
+  "ignore": [
+    "sessions/**/*",
+    "data/**/*",
+    "node_modules/**/*",
+    "*.log"
+  ],
+  "ext": "js,json",
+  "delay": "2000"
+}
