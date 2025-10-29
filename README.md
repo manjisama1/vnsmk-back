@@ -80,27 +80,27 @@ await syncSessionFiles('your-session-id');
 
 ## ⚙️ Environment Variables
 
-### Required
+### 🔧 **Minimal Setup (Required)**
 ```bash
 NODE_ENV=production                    # Environment mode
-PORT=8080                             # Server port (cloud platforms prefer 8080)
 FRONTEND_URL=https://your-app.com     # Frontend URL for CORS
 ```
 
-### Optional Security & Performance
+### ⚙️ **Optional Configuration**
 ```bash
-TRUST_PROXY=true                      # Enable if behind proxy/load balancer
+PORT=8080                             # Server port (auto-detected on most platforms)
+TRUST_PROXY=true                      # Enable if behind load balancer
 REQUEST_TIMEOUT=30000                 # Request timeout (30s)
 MAX_REQUEST_SIZE=10mb                 # Max request body size
 RATE_LIMIT_WINDOW=900000             # Rate limit window (15min)
 RATE_LIMIT_MAX=100                   # Max requests per window
 ```
 
-### OAuth (Admin Features)
+### 🔐 **Admin Features (Optional)**
 ```bash
-GITHUB_CLIENT_ID=your_client_id
-GITHUB_CLIENT_SECRET=your_secret
-BACKEND_URL=https://your-backend.com
+GITHUB_CLIENT_ID=your_client_id       # For admin authentication
+GITHUB_CLIENT_SECRET=your_secret      # For admin authentication
+BACKEND_URL=https://your-backend.com  # For OAuth callbacks
 ```
 
 ## Deployment
