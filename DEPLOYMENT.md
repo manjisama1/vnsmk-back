@@ -30,10 +30,15 @@ curl http://localhost:8080/api/health  # Should return OK
    - **Name**: `vinsmoke-bot-backend`
    - **Root Directory**: `backend` (if monorepo)
    - **Environment**: `Node`
-   - **Plan**: `Starter` ($7/month) or `Free` (limited)
-   - **Region**: Choose closest to your users
+   - **Plan**: `Free` (sleeps after 15min inactivity) or `Starter` ($7/month)
    - **Build Command**: `npm ci --only=production`
    - **Start Command**: `node server.js`
+
+**Free Tier Limitations:**
+- Service sleeps after 15 minutes of inactivity
+- 512MB RAM, shared CPU
+- No custom domains
+- 750 hours/month (enough for most use cases)
 
 ### Step 3: Environment Variables
 Set these in Render dashboard under "Environment":
@@ -78,7 +83,9 @@ BACKEND_URL=https://your-backend.onrender.com
         -X OPTIONS https://your-backend.onrender.com/api/health
    ```
 
-## 🚂 Railway Deployment
+## 🚂 Railway Deployment (Alternative Free Option)
+
+Railway offers $5 free credit monthly (usually enough for small apps):
 
 ```bash
 # Install Railway CLI
@@ -90,7 +97,26 @@ railway init
 railway up
 ```
 
-Set environment variables in Railway dashboard.
+**Railway Benefits:**
+- No sleep time (always on)
+- Better performance than Render free
+- $5/month free credit
+- Easy GitHub integration
+
+## 🌐 Vercel Deployment (Serverless - Free)
+
+For API-only deployment, Vercel offers generous free tier:
+
+1. Install Vercel CLI: `npm i -g vercel`
+2. Run `vercel` in backend directory
+3. Configure as Node.js project
+4. Set environment variables in dashboard
+
+**Vercel Benefits:**
+- Serverless (no cold starts for API)
+- Global CDN
+- Generous free tier
+- Automatic HTTPS
 
 ## 🐳 Docker Deployment
 

@@ -103,21 +103,36 @@ GITHUB_CLIENT_SECRET=your_secret      # For admin authentication
 BACKEND_URL=https://your-backend.com  # For OAuth callbacks
 ```
 
-## Deployment
+## 🚀 Deployment Options
 
-### Render.com (Recommended)
-1. Create a new Web Service on Render
-2. Connect your GitHub repository
-3. Set the root directory to `backend` (if deploying from a monorepo)
-4. Use these settings:
-   - **Build Command**: `npm install`
-   - **Start Command**: `npm start`
-   - **Environment**: Node
-5. Set environment variables:
-   - `NODE_ENV=production`
-   - `FRONTEND_URL=https://your-frontend-domain.com`
-   - `GITHUB_CLIENT_ID=your_client_id` (optional)
-   - `GITHUB_CLIENT_SECRET=your_client_secret` (optional)
+### 🆓 **Free Tier Platforms**
+
+#### Render.com (Easy Setup)
+- **Free Plan**: Sleeps after 15min inactivity
+- **Paid Plan**: $7/month, always on
+- Uses included `render.yaml` configuration
+
+#### Railway (Better Performance)
+- **Free**: $5/month credit (usually enough)
+- **No sleep time**, better than Render free
+- Excellent for development and small apps
+
+#### Vercel (Serverless)
+- **Generous free tier** with global CDN
+- Uses included `vercel.json` configuration
+- Best for API-only deployments
+
+### 🚀 **Quick Deploy Steps**
+1. **Fork/Clone**: https://github.com/manjisama1/vnsmk-back
+2. **Choose Platform**: Connect your GitHub repo
+3. **Set Variables**: `NODE_ENV=production` + `FRONTEND_URL`
+4. **Deploy**: Platform handles the rest automatically
+
+### ⚙️ **Manual Configuration**
+If not using config files, set these build settings:
+- **Build Command**: `npm ci --only=production`
+- **Start Command**: `node server.js`
+- **Node Version**: 20.x
 
 ### Railway
 1. Connect your GitHub repository
