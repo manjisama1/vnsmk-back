@@ -50,14 +50,10 @@ app.use('/api/', limiter);
 const server = http.createServer(app);
 const io = socketIo(server, {
   cors: {
-    origin: process.env.NODE_ENV === 'production' 
-      ? [process.env.FRONTEND_URL].filter(Boolean)
-      : [
-          "http://localhost:3000",
-          "http://localhost:3001",
-          "http://127.0.0.1:3000",
-          "http://127.0.0.1:3001"
-        ],
+    origin: function (origin, callback) {
+      // Use the same CORS logic as Express
+      corsOptions.origin(origin, callback);
+    },
     methods: ["GET", "POST"],
     credentials: true
   },
@@ -67,23 +63,67 @@ const io = socketIo(server, {
 // CORS configuration
 const corsOptions = {
   origin: function (origin, callback) {
-    const allowedOrigins = process.env.NODE_ENV === 'production' 
-      ? (process.env.ALLOWED_ORIGINS || process.env.FRONTEND_URL || '').split(',').filter(Boolean)
-      : [
-          'http://localhost:3000',
-          'http://localhost:3001',
-          'http://127.0.0.1:3000',
-          'http://127.0.0.1:3001'
-        ];
-    
-    // Allow requests with no origin (mobile apps, curl, etc.)
+    // Always allow requests with no origin (mobile apps, curl, etc.)
     if (!origin) return callback(null, true);
     
-    if (allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
+    // Development origins (always allowed in development)
+    const devOrigins = [
+      'http://localhost:3000',
+      'http://localhost:3001',
+      'http://127.0.0.1:3000',
+      'http://127.0.0.1:3001'
+    ];
+    
+    // Production origins from environment variables (PRIORITY)
+    const envOrigins = [];
+    
+    // Primary frontend URL
+    if (process.env.FRONTEND_URL) {
+      envOrigins.push(process.env.FRONTEND_URL);
+      console.log(`🌐 Primary frontend URL: ${process.env.FRONTEND_URL}`);
     }
+    
+    // Additional allowed origins (comma-separated)
+    if (process.env.ALLOWED_ORIGINS) {
+      const additionalOrigins = process.env.ALLOWED_ORIGINS.split(',').map(url => url.trim()).filter(Boolean);
+      envOrigins.push(...additionalOrigins);
+      console.log(`🌐 Additional origins: ${additionalOrigins.join(', ')}`);
+    }
+    
+    // Combine all explicitly allowed origins
+    const explicitOrigins = process.env.NODE_ENV === 'production' 
+      ? [...envOrigins] // Production: Only use environment variables
+      : [...devOrigins, ...envOrigins]; // Development: Include localhost + env vars
+    
+    // Check explicit origins first (highest priority)
+    if (explicitOrigins.includes(origin)) {
+      console.log(`✅ CORS allowed (explicit): ${origin}`);
+      return callback(null, true);
+    }
+    
+    // Fallback: Allow common deployment platforms (only if no env vars set)
+    if (envOrigins.length === 0) {
+      const isDeploymentPlatform = 
+        origin.endsWith('.vercel.app') ||
+        origin.endsWith('.netlify.app') ||
+        origin.endsWith('.github.io') ||
+        origin.endsWith('.herokuapp.com') ||
+        origin.endsWith('.railway.app');
+      
+      if (isDeploymentPlatform) {
+        console.log(`✅ CORS allowed (platform): ${origin}`);
+        return callback(null, true);
+      }
+    }
+    
+    // Block all other origins
+    console.warn(`🚫 CORS blocked origin: ${origin}`);
+    console.log(`🔧 To allow this origin, set environment variables:`);
+    console.log(`   FRONTEND_URL=${origin}`);
+    console.log(`   or add to ALLOWED_ORIGINS=${origin}`);
+    console.log(`✅ Currently allowed: ${explicitOrigins.join(', ') || 'None (using platform fallbacks)'}`);
+    
+    callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],

@@ -46,7 +46,20 @@ Set these in Render dashboard under "Environment":
 #### Required Variables
 ```bash
 NODE_ENV=production
-FRONTEND_URL=https://your-frontend-domain.com
+FRONTEND_URL=https://your-frontend-domain.vercel.app
+```
+
+#### CORS Configuration Examples
+```bash
+# After deploying frontend to Vercel, you'll get a URL like:
+FRONTEND_URL=https://vnsmk-front-abc123.vercel.app
+
+# For custom domains:
+FRONTEND_URL=https://your-custom-domain.com
+
+# For multiple domains:
+FRONTEND_URL=https://your-main-domain.com
+ALLOWED_ORIGINS=https://staging.your-domain.com,https://www.your-domain.com
 ```
 
 #### Security & Performance (Recommended)

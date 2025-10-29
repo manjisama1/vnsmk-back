@@ -82,8 +82,23 @@ await syncSessionFiles('your-session-id');
 
 ### 🔧 **Minimal Setup (Required)**
 ```bash
-NODE_ENV=production                    # Environment mode
-FRONTEND_URL=https://your-app.com     # Frontend URL for CORS
+NODE_ENV=production                           # Environment mode
+FRONTEND_URL=https://your-app.vercel.app     # Your deployed frontend URL
+```
+
+### 🌐 **CORS Configuration Examples**
+```bash
+# Single frontend (most common)
+FRONTEND_URL=https://vnsmk-front.vercel.app
+
+# Multiple domains
+FRONTEND_URL=https://vnsmk-front.vercel.app
+ALLOWED_ORIGINS=https://your-custom-domain.com,https://www.your-domain.com
+
+# Different platforms
+FRONTEND_URL=https://your-project.netlify.app    # Netlify
+FRONTEND_URL=https://username.github.io/repo     # GitHub Pages
+FRONTEND_URL=https://your-domain.com             # Custom domain
 ```
 
 ### ⚙️ **Optional Configuration**
