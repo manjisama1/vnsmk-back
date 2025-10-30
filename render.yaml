@@ -3,6 +3,7 @@ services:
     name: vinsmoke-bot-backend
     env: node
     plan: free
+    runtime: node
     buildCommand: npm ci --only=production
     startCommand: node server.js
     healthCheckPath: /api/health
