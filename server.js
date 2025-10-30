@@ -585,6 +585,33 @@ app.get('/api/admin/sessions/download', verifyAdmin, async (req, res) => {
   }
 });
 
+app.get('/api/admin/sessions/:sessionId/download', verifyAdmin, async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const sessionPath = path.join(__dirname, 'sessions', sessionId);
+    const credsPath = path.join(sessionPath, 'creds.json');
+    
+    if (!fs.existsSync(credsPath)) {
+      return res.status(404).json({
+        success: false,
+        error: 'Session credentials not found'
+      });
+    }
+    
+    const credsData = await fs.readFile(credsPath, 'utf8');
+    
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Disposition', `attachment; filename=${sessionId}-creds.json`);
+    res.send(credsData);
+  } catch (error) {
+    console.error('Admin Download Session Creds Error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to download session credentials'
+    });
+  }
+});
+
 app.get('/api/admin/plugins', verifyAdmin, async (req, res) => {
   try {
     const plugins = await pluginService.getPlugins({ includeAll: true }); // Include all plugins for admin
@@ -785,6 +812,71 @@ app.get('/api/admin-data', verifyAdmin, async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to get admin data'
+    });
+  }
+});
+
+app.post('/api/admin/bulk-save', verifyAdmin, async (req, res) => {
+  try {
+    const { changes } = req.body;
+    
+    if (!Array.isArray(changes)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Changes must be an array'
+      });
+    }
+
+    const results = [];
+    
+    for (const change of changes) {
+      try {
+        switch (change.type) {
+          case 'updatePlugin':
+            if (change.data.status) {
+              await pluginService.updatePluginStatus(change.id, change.data.status);
+            }
+            results.push({ type: change.type, id: change.id, success: true });
+            break;
+            
+          case 'deletePlugin':
+            await pluginService.deletePlugin(change.id);
+            results.push({ type: change.type, id: change.id, success: true });
+            break;
+            
+          case 'addFAQ':
+            const newFAQ = await faqService.addFAQ(change.data);
+            results.push({ type: change.type, success: true, data: newFAQ });
+            break;
+            
+          case 'updateFAQ':
+            const updatedFAQ = await faqService.updateFAQ(change.id, change.data);
+            results.push({ type: change.type, id: change.id, success: true, data: updatedFAQ });
+            break;
+            
+          case 'deleteFAQ':
+            await faqService.deleteFAQ(change.id);
+            results.push({ type: change.type, id: change.id, success: true });
+            break;
+            
+          default:
+            results.push({ type: change.type, success: false, error: 'Unknown change type' });
+        }
+      } catch (error) {
+        results.push({ type: change.type, success: false, error: error.message });
+      }
+    }
+
+    res.json({
+      success: true,
+      results,
+      message: `Processed ${results.length} changes`
+    });
+  } catch (error) {
+    console.error('Bulk Save Error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to save bulk changes'
     });
   }
 });
