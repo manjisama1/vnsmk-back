@@ -6,3 +6,10 @@ services:
     buildCommand: npm ci --only=production
     startCommand: node server.js
     healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: SESSION_TIMEOUT
+        value: 3600000
+      - key: MAX_SESSIONS
+        value: 50

@@ -321,6 +321,8 @@ app.post('/api/session/qr', async (req, res) => {
 app.post('/api/session/pairing', async (req, res) => {
   try {
     const { phoneNumber } = req.body;
+    console.log(`📱 Pairing code request for: ${phoneNumber} in ${process.env.NODE_ENV || 'development'} mode`);
+    
     if (!phoneNumber) {
       return res.status(400).json({
         success: false,
@@ -329,27 +331,35 @@ app.post('/api/session/pairing', async (req, res) => {
     }
 
     const sessionId = uuidv4();
+    console.log(`🆔 Generated session ID: ${sessionId}`);
+    
     const result = await whatsappService.generatePairingCode(sessionId, phoneNumber);
+    console.log(`✅ Pairing code generated successfully for session: ${sessionId}`);
 
     res.json({
       success: true,
       sessionId,
-      pairingCode: result.pairingCode
+      pairingCode: result.pairingCode,
+      environment: process.env.NODE_ENV || 'development'
     });
   } catch (error) {
+    console.error('❌ Pairing Code Generation Error:', {
+      message: error.message,
+      stack: error.stack,
+      environment: process.env.NODE_ENV || 'development'
+    });
+    
     if (error.message === 'MAINTENANCE_MODE' || error.isMaintenanceMode) {
-      // This is expected behavior, not an error
-      console.log('📋 Pairing code requested but service is in maintenance mode');
       res.status(503).json({
         success: false,
         error: 'MAINTENANCE_MODE',
         message: 'Pairing code is under maintenance. Please use QR code for now.'
       });
     } else {
-      console.error('Pairing Code Generation Error:', error);
       res.status(500).json({
         success: false,
-        error: 'Failed to generate pairing code'
+        error: 'Failed to generate pairing code',
+        details: process.env.NODE_ENV === 'development' ? error.message : undefined
       });
     }
   }

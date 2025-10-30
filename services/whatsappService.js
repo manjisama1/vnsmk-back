@@ -53,12 +53,26 @@ class WhatsAppService {
         return version;
     }
 
-    createSocket(state, version) {
+    createSocket(state, version, isPairing = false) {
+        // Use Chrome for pairing in production for better compatibility
+        const browser = isPairing && process.env.NODE_ENV === 'production' 
+            ? Browsers.windows("Chrome") 
+            : Browsers.macOS("Safari");
+
         const sock = makeWASocket({
             version,
             auth: state,
             logger: pino({ level: "silent" }),
-            browser: Browsers.macOS("Safari")
+            browser,
+            connectTimeoutMs: 60000,
+            defaultQueryTimeoutMs: 60000,
+            keepAliveIntervalMs: 30000,
+            retryRequestDelayMs: 1000,
+            maxMsgRetryCount: 5,
+            printQRInTerminal: false,
+            syncFullHistory: false,
+            shouldSyncHistoryMessage: () => false,
+            getMessage: async () => undefined
         });
         return sock;
     }
@@ -100,7 +114,7 @@ class WhatsAppService {
 
             const version = await this.checkVersion();
             const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
-            const sock = this.createSocket(state, version);
+            const sock = this.createSocket(state, version, true);
 
             return await this.handlePairingConnection(sock, sessionId, saveCreds, formattedPhone);
         } catch (error) {
@@ -157,25 +171,51 @@ class WhatsAppService {
 
             sock.ev.on('creds.update', saveCreds);
 
-            // Wait before requesting pairing code
-            await new Promise(r => setTimeout(r, 3000));
+            // Wait longer in production for better stability
+            const waitTime = process.env.NODE_ENV === 'production' ? 5000 : 3000;
+            await new Promise(r => setTimeout(r, waitTime));
 
             try {
                 if (!sock.authState.creds.registered) {
-                    const code = await sock.requestPairingCode(phoneNumber);
-                    console.log(`💬 Pairing code for ${sessionId}: ${code}`);
+                    console.log(`� Requiesting pairing code for ${phoneNumber} in ${process.env.NODE_ENV || 'development'} mode`);
+                    
+                    // Add retry logic for production
+                    let code;
+                    let attempts = 0;
+                    const maxAttempts = process.env.NODE_ENV === 'production' ? 3 : 1;
+                    
+                    while (attempts < maxAttempts) {
+                        try {
+                            code = await sock.requestPairingCode(phoneNumber);
+                            console.log(`💬 Pairing code generated for ${sessionId}: ${code} (attempt ${attempts + 1})`);
+                            break;
+                        } catch (error) {
+                            attempts++;
+                            console.error(`❌ Pairing code attempt ${attempts} failed:`, error.message);
+                            
+                            if (attempts >= maxAttempts) {
+                                throw error;
+                            }
+                            
+                            // Wait before retry
+                            await new Promise(r => setTimeout(r, 2000));
+                        }
+                    }
 
-                    this.io.to(sessionId).emit('pairing-code', {
-                        pairingCode: code,
-                        phoneNumber: `+${phoneNumber}`
-                    });
+                    if (code) {
+                        this.io.to(sessionId).emit('pairing-code', {
+                            pairingCode: code,
+                            phoneNumber: `+${phoneNumber}`
+                        });
 
-                    if (!resolved) {
-                        resolved = true;
-                        resolve({ pairingCode: code, phoneNumber: `+${phoneNumber}` });
+                        if (!resolved) {
+                            resolved = true;
+                            resolve({ pairingCode: code, phoneNumber: `+${phoneNumber}` });
+                        }
                     }
                 }
             } catch (error) {
+                console.error(`❌ Pairing code generation failed for ${sessionId}:`, error);
                 if (!resolved) {
                     resolved = true;
                     reject(error);
