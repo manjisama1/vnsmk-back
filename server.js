@@ -480,6 +480,59 @@ app.get('/api/session/:sessionId/filelist', async (req, res) => {
   }
 });
 
+// Get all session files with content in one call
+app.get('/api/session/:sessionId/all-files', async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const allFiles = await whatsappService.getAllSessionFiles(sessionId);
+
+    if (!allFiles) {
+      return res.status(404).json({
+        success: false,
+        error: 'Session not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      ...allFiles
+    });
+  } catch (error) {
+    console.error('Get All Session Files Error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get all session files'
+    });
+  }
+});
+
+// Download all session files as ZIP
+app.get('/api/session/:sessionId/download-all', async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const zipData = await whatsappService.downloadAllSessionFiles(sessionId);
+
+    if (!zipData) {
+      return res.status(404).json({
+        success: false,
+        error: 'Session not found'
+      });
+    }
+
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${sessionId}-session-files.zip"`);
+
+    zipData.archive.pipe(res);
+    zipData.archive.finalize();
+  } catch (error) {
+    console.error('Download All Session Files Error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to download session files'
+    });
+  }
+});
+
 // Admin verification middleware
 const verifyAdmin = (req, res, next) => {
   const authHeader = req.headers.authorization;

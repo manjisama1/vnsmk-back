@@ -2,11 +2,9 @@ const {
     default: makeWASocket,
     DisconnectReason,
     useMultiFileAuthState,
-    makeCacheableSignalKeyStore,
     fetchLatestBaileysVersion,
     Browsers,
-    jidNormalizedUser,
-    WA_DEFAULT_EPHEMERAL
+    jidNormalizedUser
 } = require('@whiskeysockets/baileys');
 const QRCode = require('qrcode');
 const fs = require('fs-extra');
@@ -18,7 +16,7 @@ class WhatsAppService {
         this.io = io;
         this.sessionsDir = path.join(__dirname, '../sessions');
         this.sessionTrackingFile = path.join(__dirname, '../data/session-tracking.json');
-        this.activeSessions = new Map(); // Track active sessions for retry logic
+        this.activeSessions = new Map();
         this.initialized = false;
         this.initPromise = this.initialize();
     }
@@ -26,10 +24,9 @@ class WhatsAppService {
     async initialize() {
         try {
             await this.ensureDirectories();
-            this.startSessionCleanupTimer();
-            this.startUnscannedSessionCleanup();
+            this.startCleanupTimer();
             this.initialized = true;
-            console.log('📱 WhatsApp Service: Data files initialized');
+            console.log('📱 WhatsApp Service initialized');
         } catch (error) {
             console.error('❌ WhatsApp Service initialization error:', error);
         }
@@ -45,33 +42,332 @@ class WhatsAppService {
         await fs.ensureDir(this.sessionsDir);
         await fs.ensureDir(path.dirname(this.sessionTrackingFile));
 
-        // Initialize session tracking file if it doesn't exist
         if (!(await fs.pathExists(this.sessionTrackingFile))) {
-            console.log('📱 Creating session-tracking.json file...');
             await fs.writeJson(this.sessionTrackingFile, { sessions: [] });
         }
     }
 
+    async checkVersion() {
+        const { version, isLatest } = await fetchLatestBaileysVersion();
+        console.log(`🔍 Using Baileys v${version.join(".")} (latest: ${isLatest})`);
+        return version;
+    }
+
     createSocket(state, version) {
-        return makeWASocket({
-            auth: {
-                creds: state.creds,
-                keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'silent' }))
-            },
+        const sock = makeWASocket({
             version,
-            browser: Browsers.macOS('VINSMOKE'),
-            logger: pino({ level: 'silent' }),
-            markOnlineOnConnect: false,
-            connectTimeoutMs: 60000,
-            defaultQueryTimeoutMs: 60000,
-            keepAliveIntervalMs: 10000,
-            retryRequestDelayMs: 250,
-            maxMsgRetryCount: 3,
-            printQRInTerminal: false,
-            syncFullHistory: false,
-            shouldSyncHistoryMessage: () => false,
-            getMessage: async () => undefined
+            auth: state,
+            logger: pino({ level: "silent" }),
+            browser: Browsers.macOS("Safari")
         });
+        return sock;
+    }
+
+    async generateQR(sessionId) {
+        try {
+            const maxSessions = parseInt(process.env.MAX_SESSIONS) || 100;
+            if (this.activeSessions.size >= maxSessions) {
+                throw new Error(`Maximum sessions limit reached (${maxSessions})`);
+            }
+
+            const sessionPath = path.join(this.sessionsDir, sessionId);
+            await fs.ensureDir(sessionPath);
+
+            const version = await this.checkVersion();
+            const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
+            const sock = this.createSocket(state, version);
+
+            return await this.handleQRConnection(sock, sessionId, saveCreds);
+        } catch (error) {
+            console.error('QR generation error:', error);
+            throw error;
+        }
+    }
+
+    async generatePairingCode(sessionId, phoneNumber) {
+        try {
+            const maxSessions = parseInt(process.env.MAX_SESSIONS) || 100;
+            if (this.activeSessions.size >= maxSessions) {
+                throw new Error(`Maximum sessions limit reached (${maxSessions})`);
+            }
+
+            // Clean phone number
+            const cleanPhone = phoneNumber.replace(/[\s\-\(\)]/g, '');
+            const formattedPhone = cleanPhone.startsWith('+') ? cleanPhone.slice(1) : cleanPhone;
+
+            const sessionPath = path.join(this.sessionsDir, sessionId);
+            await fs.ensureDir(sessionPath);
+
+            const version = await this.checkVersion();
+            const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
+            const sock = this.createSocket(state, version);
+
+            return await this.handlePairingConnection(sock, sessionId, saveCreds, formattedPhone);
+        } catch (error) {
+            console.error('Pairing code generation error:', error);
+            throw error;
+        }
+    }
+
+    async handleQRConnection(sock, sessionId, saveCreds) {
+        return new Promise((resolve, reject) => {
+            let resolved = false;
+            let connected = false;
+
+            sock.ev.on('creds.update', saveCreds);
+
+            sock.ev.on('connection.update', async (update) => {
+                const { connection, lastDisconnect, qr } = update;
+
+                if (qr && !resolved) {
+                    try {
+                        const qrCodeDataURL = await QRCode.toDataURL(qr);
+                        this.io.to(sessionId).emit('qr-code', { qrCode: qrCodeDataURL });
+
+                        if (!resolved) {
+                            resolved = true;
+                            resolve({ qrCode: qrCodeDataURL });
+                        }
+                    } catch (error) {
+                        if (!resolved) {
+                            resolved = true;
+                            reject(error);
+                        }
+                    }
+                }
+
+                if (connection === 'open') {
+                    console.log(`✅ QR connection opened for session: ${sessionId}`);
+                    connected = true;
+                    await this.handleSuccessfulConnection(sock, sessionId);
+                } else if (connection === 'close') {
+                    await this.handleConnectionClose(sessionId, lastDisconnect, connected, resolved, reject);
+                }
+            });
+
+            this.storeActiveSession(sessionId, sock);
+            this.setConnectionTimeout(sessionId, resolved, connected, reject, 90000);
+        });
+    }
+
+    async handlePairingConnection(sock, sessionId, saveCreds, phoneNumber) {
+        return new Promise(async (resolve, reject) => {
+            let resolved = false;
+            let connected = false;
+
+            sock.ev.on('creds.update', saveCreds);
+
+            // Wait before requesting pairing code
+            await new Promise(r => setTimeout(r, 3000));
+
+            try {
+                if (!sock.authState.creds.registered) {
+                    const code = await sock.requestPairingCode(phoneNumber);
+                    console.log(`💬 Pairing code for ${sessionId}: ${code}`);
+
+                    this.io.to(sessionId).emit('pairing-code', {
+                        pairingCode: code,
+                        phoneNumber: `+${phoneNumber}`
+                    });
+
+                    if (!resolved) {
+                        resolved = true;
+                        resolve({ pairingCode: code, phoneNumber: `+${phoneNumber}` });
+                    }
+                }
+            } catch (error) {
+                if (!resolved) {
+                    resolved = true;
+                    reject(error);
+                }
+                return;
+            }
+
+            sock.ev.on('connection.update', async ({ connection, lastDisconnect }) => {
+                if (connection === 'open') {
+                    console.log(`✅ Pairing connection opened for session: ${sessionId}`);
+                    connected = true;
+
+
+
+                    await this.handleSuccessfulConnection(sock, sessionId);
+                } else if (connection === 'close') {
+                    await this.handleConnectionClose(sessionId, lastDisconnect, connected, resolved, reject);
+                }
+            });
+
+            this.storeActiveSession(sessionId, sock, true);
+            this.setConnectionTimeout(sessionId, resolved, connected, reject, 120000);
+        });
+    }
+
+    async handleSuccessfulConnection(sock, sessionId) {
+        const customSessionId = `VINSMOKEm@${sessionId}`;
+
+        try {
+            const normalizedJid = jidNormalizedUser(sock.user.id);
+
+            // Send session ID as disappearing message
+            await sock.sendMessage(normalizedJid, {
+                text: customSessionId
+            }, {
+                ephemeralExpiration: 86400
+            });
+
+            // Send session live message
+            await sock.sendMessage(normalizedJid, {
+                text: `🟢 Session is now live and ready to use!`
+            });
+
+            console.log(`📤 Messages sent to session: ${sessionId}`);
+
+            this.io.to(sessionId).emit('session-connected', {
+                sessionId: customSessionId,
+                status: 'connected'
+            });
+
+            await this.trackSession(sessionId);
+            this.activeSessions.delete(sessionId);
+
+            // Disconnect after sending messages
+            setTimeout(() => {
+                try {
+                    sock.end();
+                    console.log(`🔌 Disconnected session: ${sessionId}`);
+                } catch (error) {
+                    console.log('Socket already closed');
+                }
+            }, 2000);
+
+        } catch (error) {
+            console.error('Error sending messages:', error);
+        }
+    }
+
+    async handleConnectionClose(sessionId, lastDisconnect, connected, resolved, reject) {
+        const reason = lastDisconnect?.error?.output?.statusCode;
+        console.log(`❌ Connection closed for session: ${sessionId}, reason: ${reason}`);
+
+        if (connected) {
+            console.log(`✅ Session ${sessionId} completed successfully`);
+            return;
+        }
+
+        // Clean up session if logged out
+        if (reason === DisconnectReason.loggedOut) {
+            await this.cleanupSession(sessionId);
+            if (!resolved) {
+                this.activeSessions.delete(sessionId);
+                reject(new Error('Session logged out'));
+            }
+            return;
+        }
+
+        // Simple reconnect logic like the script - just restart the connection
+        console.log(`🔄 Reconnecting session: ${sessionId}...`);
+        await new Promise(r => setTimeout(r, 2000));
+
+        try {
+            const sessionData = this.activeSessions.get(sessionId);
+            if (sessionData) {
+                if (sessionData.isPairing) {
+                    // Restart pairing connection
+                    await this.restartPairingConnection(sessionId);
+                } else {
+                    // Restart QR connection
+                    await this.restartQRConnection(sessionId);
+                }
+            }
+        } catch (error) {
+            console.error('Reconnection failed:', error);
+            if (!resolved) {
+                this.activeSessions.delete(sessionId);
+                reject(error);
+            }
+        }
+    }
+
+    storeActiveSession(sessionId, sock, isPairing = false) {
+        this.activeSessions.set(sessionId, {
+            socket: sock,
+            createdAt: Date.now(),
+            sessionPath: path.join(this.sessionsDir, sessionId),
+            isPairing
+        });
+    }
+
+    async restartQRConnection(sessionId) {
+        const sessionData = this.activeSessions.get(sessionId);
+        if (!sessionData) return;
+
+        const version = await this.checkVersion();
+        const { state, saveCreds } = await useMultiFileAuthState(sessionData.sessionPath);
+        const sock = this.createSocket(state, version);
+
+        // Update socket reference
+        sessionData.socket = sock;
+        this.activeSessions.set(sessionId, sessionData);
+
+        // Handle connection events
+        sock.ev.on('creds.update', saveCreds);
+
+        sock.ev.on('connection.update', async (update) => {
+            const { connection, lastDisconnect, qr } = update;
+
+            if (qr) {
+                try {
+                    const qrCodeDataURL = await QRCode.toDataURL(qr);
+                    this.io.to(sessionId).emit('qr-code', { qrCode: qrCodeDataURL });
+                    console.log(`📱 New QR code generated for reconnection: ${sessionId}`);
+                } catch (error) {
+                    console.error('QR generation error on reconnect:', error);
+                }
+            }
+
+            if (connection === 'open') {
+                console.log(`✅ QR reconnection successful for session: ${sessionId}`);
+                await this.handleSuccessfulConnection(sock, sessionId);
+            } else if (connection === 'close') {
+                await this.handleConnectionClose(sessionId, lastDisconnect, true, false, () => { });
+            }
+        });
+    }
+
+    async restartPairingConnection(sessionId) {
+        const sessionData = this.activeSessions.get(sessionId);
+        if (!sessionData) return;
+
+        const version = await this.checkVersion();
+        const { state, saveCreds } = await useMultiFileAuthState(sessionData.sessionPath);
+        const sock = this.createSocket(state, version);
+
+        // Update socket reference
+        sessionData.socket = sock;
+        this.activeSessions.set(sessionId, sessionData);
+
+        // Handle connection events
+        sock.ev.on('creds.update', saveCreds);
+
+        sock.ev.on('connection.update', async ({ connection, lastDisconnect }) => {
+            if (connection === 'open') {
+                console.log(`✅ Pairing reconnection successful for session: ${sessionId}`);
+
+
+
+                await this.handleSuccessfulConnection(sock, sessionId);
+            } else if (connection === 'close') {
+                await this.handleConnectionClose(sessionId, lastDisconnect, true, false, () => { });
+            }
+        });
+    }
+
+    setConnectionTimeout(sessionId, resolved, connected, reject, timeout) {
+        setTimeout(() => {
+            if (!resolved && !connected) {
+                this.activeSessions.delete(sessionId);
+                reject(new Error('Connection timeout'));
+            }
+        }, timeout);
     }
 
     async trackSession(sessionId) {
@@ -80,14 +376,26 @@ class WhatsAppService {
             const sessionData = {
                 sessionId,
                 createdAt: new Date().toISOString(),
-                expiresAt: new Date(Date.now() + (parseInt(process.env.SESSION_TIMEOUT) || 24 * 60 * 60 * 1000)).toISOString()
+                expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
             };
 
             tracking.sessions.push(sessionData);
             await fs.writeJson(this.sessionTrackingFile, tracking, { spaces: 2 });
-            console.log(`📝 Session tracked: ${sessionId} (expires in 24h)`);
+            console.log(`📝 Session tracked: ${sessionId}`);
         } catch (error) {
             console.error('Error tracking session:', error);
+        }
+    }
+
+    async cleanupSession(sessionId) {
+        try {
+            const sessionPath = path.join(this.sessionsDir, sessionId);
+            if (await fs.pathExists(sessionPath)) {
+                await fs.remove(sessionPath);
+            }
+            await this.removeSessionTracking(sessionId);
+        } catch (error) {
+            console.error('Error cleaning up session:', error);
         }
     }
 
@@ -101,488 +409,233 @@ class WhatsAppService {
         }
     }
 
+    async stopSession(sessionId) {
+        try {
+            console.log(`🛑 Stopping session: ${sessionId}`);
+
+            const sessionData = this.activeSessions.get(sessionId);
+            if (sessionData && sessionData.socket) {
+                try {
+                    await sessionData.socket.logout();
+                } catch (error) {
+                    sessionData.socket.end();
+                }
+            }
+
+            this.activeSessions.delete(sessionId);
+            await this.cleanupSession(sessionId);
+
+            console.log(`✅ Session stopped: ${sessionId}`);
+            return { success: true };
+        } catch (error) {
+            console.error('Stop session error:', error);
+            this.activeSessions.delete(sessionId);
+            throw error;
+        }
+    }
+
+    startCleanupTimer() {
+        // Cleanup expired sessions every hour
+        setInterval(() => {
+            this.cleanupExpiredSessions();
+        }, 60 * 60 * 1000);
+
+        // Cleanup unscanned sessions every 5 minutes
+        setInterval(() => {
+            this.cleanupUnscannedSessions();
+        }, 5 * 60 * 1000);
+
+        // Cleanup bad sessions every 30 minutes
+        setInterval(() => {
+            this.cleanupBadSessions();
+        }, 30 * 60 * 1000);
+
+        // Sync session data every 15 minutes
+        setInterval(() => {
+            this.syncSessionData();
+        }, 15 * 60 * 1000);
+
+        // Initial cleanup after 30 seconds
+        setTimeout(() => {
+            this.syncSessionData();
+            this.cleanupBadSessions();
+        }, 30000);
+    }
+
     async cleanupExpiredSessions() {
         try {
             const tracking = await fs.readJson(this.sessionTrackingFile);
             const now = new Date();
-            const expiredSessions = [];
-            const orphanedSessions = [];
             const validSessions = [];
 
             for (const session of tracking.sessions) {
-                const sessionPath = path.join(this.sessionsDir, session.sessionId);
-                const sessionExists = await fs.pathExists(sessionPath);
-
-                if (!sessionExists) {
-                    // Session folder doesn't exist - orphaned entry
-                    orphanedSessions.push(session);
-                    console.log(`🗑️ Found orphaned session entry: ${session.sessionId} (folder missing)`);
-                } else if (new Date(session.expiresAt) <= now) {
-                    // Session expired
-                    expiredSessions.push(session);
+                if (new Date(session.expiresAt) <= now) {
+                    await this.cleanupSession(session.sessionId);
+                    console.log(`🗑️ Deleted expired session: ${session.sessionId}`);
                 } else {
-                    // Session is valid and active
                     validSessions.push(session);
                 }
             }
 
-            // Delete expired session folders
-            for (const session of expiredSessions) {
-                const sessionPath = path.join(this.sessionsDir, session.sessionId);
-                if (await fs.pathExists(sessionPath)) {
-                    await fs.remove(sessionPath);
-                    console.log(`🗑️ Deleted expired session: ${session.sessionId}`);
-                }
-            }
-
-            // Update tracking file with only valid sessions (removes both expired and orphaned)
             tracking.sessions = validSessions;
             await fs.writeJson(this.sessionTrackingFile, tracking, { spaces: 2 });
-
-            const totalCleaned = expiredSessions.length + orphanedSessions.length;
-            if (totalCleaned > 0) {
-                console.log(`🧹 Cleaned up ${expiredSessions.length} expired and ${orphanedSessions.length} orphaned sessions`);
-            }
         } catch (error) {
             console.error('Error cleaning up expired sessions:', error);
         }
     }
 
-    async cleanupOrphanedEntries() {
+    async cleanupUnscannedSessions() {
         try {
-            const tracking = await fs.readJson(this.sessionTrackingFile);
-            const orphanedSessions = [];
-            const validSessions = [];
+            const now = Date.now();
+            const maxAge = 10 * 60 * 1000; // 10 minutes
 
-            for (const session of tracking.sessions) {
-                const sessionPath = path.join(this.sessionsDir, session.sessionId);
-                const sessionExists = await fs.pathExists(sessionPath);
+            for (const [sessionId, sessionData] of this.activeSessions.entries()) {
+                const age = now - sessionData.createdAt;
 
-                if (!sessionExists) {
-                    orphanedSessions.push(session);
-                    console.log(`🗑️ Removing orphaned entry: ${session.sessionId} (folder missing)`);
-                } else {
-                    validSessions.push(session);
+                if (age > maxAge && !sessionData.connected) {
+                    console.log(`🧹 Cleaning up unscanned session: ${sessionId}`);
+                    await this.stopSession(sessionId);
                 }
             }
-
-            if (orphanedSessions.length > 0) {
-                // Update tracking file to remove orphaned entries
-                tracking.sessions = validSessions;
-                await fs.writeJson(this.sessionTrackingFile, tracking, { spaces: 2 });
-                console.log(`🧹 Removed ${orphanedSessions.length} orphaned session entries`);
-            }
-
-            return orphanedSessions.length;
         } catch (error) {
-            console.error('Error cleaning up orphaned entries:', error);
-            return 0;
+            console.error('Unscanned session cleanup error:', error);
         }
     }
 
-    startSessionCleanupTimer() {
-        // Run cleanup every hour
-        setInterval(() => {
-            this.cleanupExpiredSessions();
-        }, 60 * 60 * 1000);
-
-        // Run initial sync and cleanup
-        setTimeout(() => {
-            this.syncSessionData().then(() => {
-                this.cleanupExpiredSessions();
-            });
-        }, 5000);
-
-        // Run orphaned cleanup every 30 minutes
-        setInterval(() => {
-            this.cleanupOrphanedEntries();
-        }, 30 * 60 * 1000);
-
-        // Run full sync every 6 hours to catch any inconsistencies
-        setInterval(() => {
-            this.syncSessionData();
-        }, 6 * 60 * 60 * 1000);
-    }
-
-    startUnscannedSessionCleanup() {
-        // Clean up unscanned sessions every 5 minutes
-        setInterval(async () => {
-            try {
-                const now = Date.now();
-                const maxAge = 10 * 60 * 1000; // 10 minutes
-                
-                for (const [sessionId, sessionData] of this.activeSessions.entries()) {
-                    const age = now - sessionData.createdAt;
-                    
-                    // If session is older than 10 minutes and not connected, clean it up
-                    if (age > maxAge && !sessionData.connected) {
-                        console.log(`🧹 Cleaning up unscanned session: ${sessionId} (age: ${Math.round(age / 1000 / 60)}min)`);
-                        try {
-                            await this.stopSession(sessionId);
-                        } catch (error) {
-                            console.error('Error cleaning up unscanned session:', error);
-                        }
-                    }
-                }
-            } catch (error) {
-                console.error('Unscanned session cleanup error:', error);
-            }
-        }, 5 * 60 * 1000); // 5 minutes
-    }
-
-    shouldReconnect(lastDisconnect) {
-        const reason = lastDisconnect?.error?.output?.statusCode;
-
-        // Don't reconnect for these reasons
-        if (reason === DisconnectReason.loggedOut || 
-            reason === DisconnectReason.badSession ||
-            reason === 408 || // Request timeout - usually means QR expired
-            reason === 401 || // Unauthorized
-            reason === 403 || // Forbidden
-            reason === 428) { // Precondition required
-            return false;
-        }
-
-        // Only reconnect for connection issues (515, 500, etc.)
-        return reason === DisconnectReason.connectionLost || 
-               reason === DisconnectReason.connectionClosed ||
-               reason === 515; // Stream error
-    }
-
-    async handleConnection(sock, sessionId, saveCreds) {
-        return new Promise((resolve, reject) => {
-            let resolved = false;
-            let connected = false;
-            let qrCount = 0;
-            let qrExpired = false;
-
-            sock.ev.on('connection.update', async (update) => {
-                const { connection, lastDisconnect, qr, receivedPendingNotifications } = update;
-
-                if (qr && !resolved && !qrExpired) {
-                    try {
-                        qrCount++;
-                        console.log(`📱 QR Code ${qrCount} generated for session: ${sessionId}`);
-                        
-                        // Only allow the first QR code
-                        if (qrCount === 1) {
-                            const qrCodeDataURL = await QRCode.toDataURL(qr);
-
-                            this.io.to(sessionId).emit('qr-code', {
-                                qrCode: qrCodeDataURL,
-                                qrCount
-                            });
-
-                            if (!resolved) {
-                                resolved = true;
-                                resolve({ qrCode: qrCodeDataURL });
-                            }
-                        } else {
-                            // QR code refreshed, mark as expired and stop the session
-                            console.log(`⏰ QR Code expired for session: ${sessionId}, stopping session`);
-                            qrExpired = true;
-                            
-                            this.io.to(sessionId).emit('qr-expired', {
-                                message: 'QR Code expired. Please generate a new one.'
-                            });
-                            
-                            // Stop the session after QR expires
-                            setTimeout(async () => {
-                                try {
-                                    await this.stopSession(sessionId);
-                                } catch (error) {
-                                    console.error('Error stopping expired session:', error);
-                                }
-                            }, 2000);
-                        }
-                    } catch (error) {
-                        console.error('QR Code generation error:', error);
-                        if (!resolved) {
-                            resolved = true;
-                            reject(error);
-                        }
-                    }
-                }
-
-                // Detect when QR is scanned
-                if (receivedPendingNotifications && !connected) {
-                    console.log(`📱 QR Code scanned for session: ${sessionId}, processing connection...`);
-                    this.io.to(sessionId).emit('qr-scanned', { message: 'QR Code scanned, connecting...' });
-                }
-
-                if (connection === 'open') {
-                    console.log(`✅ WhatsApp connection opened for session: ${sessionId}`);
-                    connected = true;
-
-                    // Generate custom session ID
-                    const customSessionId = `VINSMOKEm@${sessionId}`;
-
-                    try {
-                        // Normalize the JID to get clean user ID
-                        const normalizedJid = jidNormalizedUser(sock.user.id);
-                        console.log(`📱 Normalized JID: ${normalizedJid} (from ${sock.user.id})`);
-
-                        // Send session ID as disappearing message (24 hours)
-                        await sock.sendMessage(normalizedJid, {
-                            text: customSessionId
-                        }, {
-                            ephemeralExpiration: 86400 // 24 hours in seconds
-                        });
-
-                        // Send session live message as normal message (permanent)
-                        await sock.sendMessage(normalizedJid, {
-                            text: `🟢 Session is now live and ready to use!`
-                        });
-
-                        console.log(`📤 Messages sent to session: ${sessionId} (session ID expires in 24h, status permanent)`);
-
-                        // Mark session as connected
-                        const sessionData = this.activeSessions.get(sessionId);
-                        if (sessionData) {
-                            sessionData.connected = true;
-                        }
-
-                        // Emit connection success
-                        this.io.to(sessionId).emit('session-connected', {
-                            sessionId: customSessionId,
-                            status: 'connected'
-                        });
-
-                        // Track session for 24h cleanup
-                        await this.trackSession(sessionId);
-
-                        // Clean up from active sessions
-                        this.activeSessions.delete(sessionId);
-
-                        // Disconnect immediately after sending messages
-                        setTimeout(() => {
-                            try {
-                                sock.end();
-                                console.log(`🔌 Disconnected session: ${sessionId} (session created and messages sent)`);
-                            } catch (error) {
-                                console.log('Socket already closed');
-                            }
-                        }, 2000);
-
-                    } catch (error) {
-                        console.error('Error sending messages:', error);
-                    }
-                } else if (connection === 'close') {
-                    const reason = lastDisconnect?.error?.output?.statusCode;
-                    console.log(`❌ Connection closed for session: ${sessionId}, reason: ${reason}`);
-
-                    if (connected) {
-                        // If we were connected and then disconnected, that's fine (we sent our messages)
-                        console.log(`✅ Session ${sessionId} completed successfully`);
-                        return;
-                    }
-
-                    // Handle reconnection logic
-                    if (this.shouldReconnect(lastDisconnect)) {
-                        const sessionData = this.activeSessions.get(sessionId);
-                        if (sessionData) {
-                            const attempts = sessionData.attempts || 0;
-                            if (attempts < 3) {
-                                console.log(`🔄 Attempting reconnection ${attempts + 1}/3 for session: ${sessionId} (reason: ${reason})`);
-
-                                // Update attempt count
-                                sessionData.attempts = attempts + 1;
-                                this.activeSessions.set(sessionId, sessionData);
-
-                                // Close current socket
-                                try {
-                                    sock.end();
-                                } catch (e) {
-                                    console.log('Socket already closed');
-                                }
-
-                                // Retry after delay
-                                setTimeout(async () => {
-                                    try {
-                                        await this.reconnectSession(sessionId);
-                                    } catch (error) {
-                                        console.error('Reconnection failed:', error);
-                                    }
-                                }, 5000 * (attempts + 1)); // Exponential backoff
-
-                                return; // Don't resolve/reject yet, let reconnection handle it
-                            } else {
-                                console.log(`❌ Max reconnection attempts reached for session: ${sessionId}`);
-                                this.activeSessions.delete(sessionId);
-                            }
-                        }
-                    }
-
-                    if (!resolved) {
-                        resolved = true;
-                        if (reason === DisconnectReason.loggedOut) {
-                            reject(new Error('Session logged out'));
-                        } else if (reason === DisconnectReason.badSession) {
-                            reject(new Error('Bad session'));
-                        } else {
-                            reject(new Error(`Connection failed with reason: ${reason}`));
-                        }
-                    }
-                } else if (connection === 'connecting') {
-                    console.log(`🔄 Connecting to WhatsApp for session: ${sessionId}`);
-                }
-            });
-
-            sock.ev.on('creds.update', saveCreds);
-
-            // Store socket reference for potential reconnection
-            this.activeSessions.set(sessionId, {
-                socket: sock,
-                createdAt: Date.now(),
-                attempts: 0,
-                sessionPath: path.join(this.sessionsDir, sessionId)
-            });
-
-            // Timeout for connection
-            setTimeout(() => {
-                if (!resolved && !connected) {
-                    resolved = true;
-                    this.activeSessions.delete(sessionId);
-                    reject(new Error('Connection timeout'));
-                }
-            }, 90000); // 90 seconds timeout
-        });
-    }
-
-    async reconnectSession(sessionId) {
+    async cleanupBadSessions() {
         try {
-            const sessionData = this.activeSessions.get(sessionId);
-            if (!sessionData) {
-                console.log('Session data not found for reconnection:', sessionId);
+            console.log('🔍 Scanning for bad session folders...');
+            
+            if (!(await fs.pathExists(this.sessionsDir))) {
                 return;
             }
 
-            console.log('Attempting to reconnect session:', sessionId);
-            const sessionPath = sessionData.sessionPath;
+            const sessionDirs = await fs.readdir(this.sessionsDir);
+            let badSessionsCount = 0;
 
-            const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
-            const { version } = await fetchLatestBaileysVersion();
+            for (const dirName of sessionDirs) {
+                const sessionPath = path.join(this.sessionsDir, dirName);
+                const stat = await fs.stat(sessionPath);
 
-            const sock = this.createSocket(state, version);
-
-            // Update the socket reference
-            sessionData.socket = sock;
-            this.activeSessions.set(sessionId, sessionData);
-
-            await this.handleConnection(sock, sessionId, saveCreds);
-        } catch (error) {
-            console.error('Reconnection error for session', sessionId, ':', error);
-            this.activeSessions.delete(sessionId);
-            throw error;
-        }
-    }
-
-    async generateQR(sessionId) {
-        try {
-            // Check max sessions limit
-            const maxSessions = parseInt(process.env.MAX_SESSIONS) || 100;
-            if (this.activeSessions.size >= maxSessions) {
-                throw new Error(`Maximum sessions limit reached (${maxSessions}). Please try again later.`);
-            }
-
-            const sessionPath = path.join(this.sessionsDir, sessionId);
-            await fs.ensureDir(sessionPath);
-
-            const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
-            const { version } = await fetchLatestBaileysVersion();
-
-            const sock = this.createSocket(state, version);
-            return await this.handleConnection(sock, sessionId, saveCreds);
-        } catch (error) {
-            console.error('WhatsApp QR generation error:', error);
-            throw error;
-        }
-    }
-
-    // PAIRING CODE COMPLETELY REMOVED - NOT WORKING IN BAILEYS
-    // Always returns maintenance mode error
-    async generatePairingCode() {
-        // Throw maintenance mode error (this is expected behavior)
-        const error = new Error('MAINTENANCE_MODE');
-        error.isMaintenanceMode = true;
-        throw error;
-    }
-
-    async getSession(sessionId) {
-        try {
-            const sessionPath = path.join(this.sessionsDir, sessionId);
-            if (await fs.pathExists(sessionPath)) {
-                return {
-                    id: sessionId,
-                    status: 'available',
-                    path: sessionPath
-                };
-            }
-            return null;
-        } catch (error) {
-            console.error('Get session error:', error);
-            throw error;
-        }
-    }
-
-    async stopSession(sessionId) {
-        try {
-            console.log(`🛑 Stopping session: ${sessionId}`);
-            
-            // Get the active session data
-            const sessionData = this.activeSessions.get(sessionId);
-            if (sessionData && sessionData.socket) {
-                // Close the WhatsApp connection
-                try {
-                    await sessionData.socket.logout();
-                } catch (error) {
-                    // If logout fails, force close the connection
-                    console.log(`Force closing connection for session: ${sessionId}`);
-                    sessionData.socket.end();
+                if (stat.isDirectory()) {
+                    const isGoodSession = await this.isGoodSession(sessionPath);
+                    
+                    if (!isGoodSession) {
+                        console.log(`🗑️ Removing bad session folder: ${dirName}`);
+                        await fs.remove(sessionPath);
+                        await this.removeSessionTracking(dirName);
+                        badSessionsCount++;
+                    }
                 }
             }
-            
-            // Remove from active sessions
-            this.activeSessions.delete(sessionId);
-            
-            // Clean up session files
-            const sessionPath = path.join(this.sessionsDir, sessionId);
-            if (await fs.pathExists(sessionPath)) {
-                await fs.remove(sessionPath);
+
+            if (badSessionsCount > 0) {
+                console.log(`✅ Cleaned up ${badSessionsCount} bad session folders`);
             }
-            
-            // Remove from tracking
-            await this.removeSessionTracking(sessionId);
-            
-            console.log(`✅ Session stopped and cleaned up: ${sessionId}`);
-            return { success: true };
         } catch (error) {
-            console.error('Stop session error:', error);
-            // Still remove from active sessions even if cleanup fails
-            this.activeSessions.delete(sessionId);
-            throw error;
+            console.error('Bad session cleanup error:', error);
         }
     }
 
-    async deleteSession(sessionId) {
+    async isGoodSession(sessionPath) {
         try {
-            const sessionPath = path.join(this.sessionsDir, sessionId);
-            if (await fs.pathExists(sessionPath)) {
-                await fs.remove(sessionPath);
+            const files = await fs.readdir(sessionPath);
+            
+            // Check if creds.json exists
+            const hasCredsFile = files.includes('creds.json');
+            if (!hasCredsFile) {
+                return false; // No creds file = bad session
             }
 
-            await this.removeSessionTracking(sessionId);
-            console.log(`🗑️ Session deleted: ${sessionId}`);
+            // Good session must have creds.json + at least one other file
+            const otherFiles = files.filter(file => file !== 'creds.json');
+            return otherFiles.length > 0;
         } catch (error) {
-            console.error('Delete session error:', error);
-            throw error;
+            console.error('Error checking session validity:', error);
+            return false; // If we can't read it, consider it bad
         }
     }
 
+    async syncSessionData() {
+        try {
+            console.log('🔄 Syncing session data with filesystem...');
+
+            // Get current tracking data
+            const tracking = await fs.readJson(this.sessionTrackingFile);
+            const validSessions = [];
+            let orphanedCount = 0;
+            let missingCount = 0;
+
+            // Check each tracked session against filesystem
+            for (const session of tracking.sessions) {
+                const sessionPath = path.join(this.sessionsDir, session.sessionId);
+                
+                if (await fs.pathExists(sessionPath)) {
+                    // Check if it's a good session
+                    const isGood = await this.isGoodSession(sessionPath);
+                    if (isGood) {
+                        validSessions.push(session);
+                    } else {
+                        console.log(`🗑️ Removing bad session from tracking: ${session.sessionId}`);
+                        await fs.remove(sessionPath);
+                        orphanedCount++;
+                    }
+                } else {
+                    orphanedCount++;
+                    console.log(`🗑️ Removing orphaned entry: ${session.sessionId} (folder missing)`);
+                }
+            }
+
+            // Check for untracked session folders
+            if (await fs.pathExists(this.sessionsDir)) {
+                const sessionDirs = await fs.readdir(this.sessionsDir);
+                const trackedIds = new Set(validSessions.map(s => s.sessionId));
+
+                for (const dirName of sessionDirs) {
+                    const dirPath = path.join(this.sessionsDir, dirName);
+                    const stat = await fs.stat(dirPath);
+
+                    if (stat.isDirectory() && !trackedIds.has(dirName)) {
+                        const isGood = await this.isGoodSession(dirPath);
+                        
+                        if (isGood) {
+                            // Add missing good session to tracking
+                            const sessionData = {
+                                sessionId: dirName,
+                                createdAt: stat.birthtime.toISOString(),
+                                expiresAt: new Date(stat.birthtime.getTime() + 24 * 60 * 60 * 1000).toISOString()
+                            };
+                            validSessions.push(sessionData);
+                            missingCount++;
+                            console.log(`📝 Added missing session to tracking: ${dirName}`);
+                        } else {
+                            // Remove bad untracked session
+                            console.log(`🗑️ Removing untracked bad session: ${dirName}`);
+                            await fs.remove(dirPath);
+                        }
+                    }
+                }
+            }
+
+            // Update tracking file if changes were made
+            if (orphanedCount > 0 || missingCount > 0) {
+                tracking.sessions = validSessions;
+                await fs.writeJson(this.sessionTrackingFile, tracking, { spaces: 2 });
+            }
+
+            console.log(`✅ Session sync complete: removed ${orphanedCount} orphaned entries, added ${missingCount} missing sessions`);
+            return { orphanedCount, missingCount };
+        } catch (error) {
+            console.error('Error syncing session data:', error);
+            return { orphanedCount: 0, missingCount: 0 };
+        }
+    }
+
+    // Session file management methods
     async getSessionFiles(sessionId) {
         try {
             const sessionPath = path.join(this.sessionsDir, sessionId);
-            
+
             if (!(await fs.pathExists(sessionPath))) {
                 return null;
             }
@@ -593,7 +646,7 @@ class WhatsAppService {
             for (const fileName of fileList) {
                 const filePath = path.join(sessionPath, fileName);
                 const stats = await fs.stat(filePath);
-                
+
                 if (stats.isFile()) {
                     files[fileName] = {
                         size: stats.size,
@@ -614,12 +667,11 @@ class WhatsAppService {
         try {
             const sessionPath = path.join(this.sessionsDir, sessionId);
             const filePath = path.join(sessionPath, fileName);
-            
-            // Security check: ensure the file is within the session directory
+
             if (!filePath.startsWith(sessionPath)) {
                 throw new Error('Invalid file path');
             }
-            
+
             if (!(await fs.pathExists(filePath))) {
                 return null;
             }
@@ -630,7 +682,7 @@ class WhatsAppService {
             }
 
             const buffer = await fs.readFile(filePath);
-            
+
             return {
                 buffer: buffer,
                 size: stats.size,
@@ -643,10 +695,20 @@ class WhatsAppService {
         }
     }
 
-    async getSessionFileList(sessionId) {
+    async getAllSessions() {
+        try {
+            const tracking = await fs.readJson(this.sessionTrackingFile);
+            return tracking.sessions;
+        } catch (error) {
+            console.error('Get all sessions error:', error);
+            return [];
+        }
+    }
+
+    async getAllSessionFiles(sessionId) {
         try {
             const sessionPath = path.join(this.sessionsDir, sessionId);
-            
+
             if (!(await fs.pathExists(sessionPath))) {
                 return null;
             }
@@ -657,7 +719,45 @@ class WhatsAppService {
             for (const fileName of fileList) {
                 const filePath = path.join(sessionPath, fileName);
                 const stats = await fs.stat(filePath);
-                
+
+                if (stats.isFile()) {
+                    const buffer = await fs.readFile(filePath);
+                    files.push({
+                        name: fileName,
+                        size: stats.size,
+                        modified: stats.mtime,
+                        content: buffer.toString('base64'),
+                        downloadUrl: `/api/session/${sessionId}/file/${encodeURIComponent(fileName)}`
+                    });
+                }
+            }
+
+            return {
+                sessionId,
+                totalFiles: files.length,
+                files
+            };
+        } catch (error) {
+            console.error('Get all session files error:', error);
+            throw error;
+        }
+    }
+
+    async getSessionFileList(sessionId) {
+        try {
+            const sessionPath = path.join(this.sessionsDir, sessionId);
+
+            if (!(await fs.pathExists(sessionPath))) {
+                return null;
+            }
+
+            const files = [];
+            const fileList = await fs.readdir(sessionPath);
+
+            for (const fileName of fileList) {
+                const filePath = path.join(sessionPath, fileName);
+                const stats = await fs.stat(filePath);
+
                 if (stats.isFile()) {
                     files.push({
                         name: fileName,
@@ -675,63 +775,42 @@ class WhatsAppService {
         }
     }
 
-    async getAllSessions() {
+    async downloadAllSessionFiles(sessionId) {
         try {
-            const tracking = await fs.readJson(this.sessionTrackingFile);
-            return tracking.sessions;
-        } catch (error) {
-            console.error('Get all sessions error:', error);
-            return [];
-        }
-    }
+            const sessionPath = path.join(this.sessionsDir, sessionId);
 
-    async syncSessionData() {
-        try {
-            console.log('🔄 Syncing session data with filesystem...');
+            if (!(await fs.pathExists(sessionPath))) {
+                return null;
+            }
 
-            // Get current tracking data
-            const tracking = await fs.readJson(this.sessionTrackingFile);
-            const validSessions = [];
-            let orphanedCount = 0;
+            const archiver = require('archiver');
+            const archive = archiver('zip', { zlib: { level: 9 } });
 
-            // Check each tracked session
-            for (const session of tracking.sessions) {
-                const sessionPath = path.join(this.sessionsDir, session.sessionId);
-                if (await fs.pathExists(sessionPath)) {
-                    validSessions.push(session);
-                } else {
-                    orphanedCount++;
-                    console.log(`🗑️ Removing orphaned entry: ${session.sessionId}`);
+            const fileList = await fs.readdir(sessionPath);
+            const files = [];
+
+            for (const fileName of fileList) {
+                const filePath = path.join(sessionPath, fileName);
+                const stats = await fs.stat(filePath);
+
+                if (stats.isFile()) {
+                    archive.file(filePath, { name: fileName });
+                    files.push({
+                        name: fileName,
+                        size: stats.size,
+                        modified: stats.mtime
+                    });
                 }
             }
 
-            // Also check for untracked session folders
-            const sessionDirs = await fs.readdir(this.sessionsDir);
-            const trackedIds = new Set(validSessions.map(s => s.sessionId));
-            let untrackedCount = 0;
-
-            for (const dirName of sessionDirs) {
-                const dirPath = path.join(this.sessionsDir, dirName);
-                const stat = await fs.stat(dirPath);
-
-                if (stat.isDirectory() && !trackedIds.has(dirName)) {
-                    untrackedCount++;
-                    console.log(`🗑️ Removing untracked session folder: ${dirName}`);
-                    await fs.remove(dirPath);
-                }
-            }
-
-            // Update tracking file
-            if (orphanedCount > 0) {
-                tracking.sessions = validSessions;
-                await fs.writeJson(this.sessionTrackingFile, tracking, { spaces: 2 });
-            }
-
-            console.log(`✅ Session sync complete: removed ${orphanedCount} orphaned entries and ${untrackedCount} untracked folders`);
-            return { orphanedCount, untrackedCount };
+            return {
+                archive,
+                files,
+                sessionId
+            };
         } catch (error) {
-            console.error('Error syncing session data:', error);
-            return { orphanedCount: 0, untrackedCount: 0 };
+            console.error('Download all session files error:', error);
+            throw error;
         }
     }
 }
