@@ -290,6 +290,12 @@ class WhatsAppService {
 
         if (connected) {
             console.log(`✅ Session ${sessionId} completed successfully`);
+            // Mark session as completed to prevent cleanup
+            const sessionData = this.activeSessions.get(sessionId);
+            if (sessionData) {
+                sessionData.completed = true;
+                sessionData.completedAt = new Date().toISOString();
+            }
             return;
         }
 

@@ -367,7 +367,13 @@ app.post('/api/session/pairing', async (req, res) => {
 
 app.get('/api/session/:sessionId', async (req, res) => {
   try {
-    const { sessionId } = req.params;
+    let { sessionId } = req.params;
+    
+    // Handle VINSMOKE@ prefix - if not present, add it
+    if (!sessionId.startsWith('VINSMOKE@')) {
+      sessionId = `VINSMOKE@${sessionId}`;
+    }
+    
     const sessionData = await whatsappService.getSession(sessionId);
 
     if (!sessionData) {
@@ -392,7 +398,13 @@ app.get('/api/session/:sessionId', async (req, res) => {
 
 app.delete('/api/session/:sessionId', async (req, res) => {
   try {
-    const { sessionId } = req.params;
+    let { sessionId } = req.params;
+    
+    // Handle VINSMOKE@ prefix - if not present, add it
+    if (!sessionId.startsWith('VINSMOKE@')) {
+      sessionId = `VINSMOKE@${sessionId}`;
+    }
+    
     await whatsappService.deleteSession(sessionId);
 
     res.json({
@@ -648,29 +660,163 @@ app.get('/api/admin/sessions/download', verifyAdmin, async (req, res) => {
   }
 });
 
-app.get('/api/admin/sessions/:sessionId/download', verifyAdmin, async (req, res) => {
+// Get session files list
+app.get('/api/admin/sessions/:sessionId/files', verifyAdmin, async (req, res) => {
   try {
-    const { sessionId } = req.params;
-    const sessionPath = path.join(__dirname, 'sessions', sessionId);
-    const credsPath = path.join(sessionPath, 'creds.json');
+    let { sessionId } = req.params;
     
-    if (!fs.existsSync(credsPath)) {
+    // Handle VINSMOKE@ prefix - if not present, add it
+    if (!sessionId.startsWith('VINSMOKE@')) {
+      sessionId = `VINSMOKE@${sessionId}`;
+    }
+    
+    const sessionPath = path.join(__dirname, 'sessions', sessionId);
+    
+    if (!fs.existsSync(sessionPath)) {
       return res.status(404).json({
         success: false,
-        error: 'Session credentials not found'
+        error: 'Session not found'
       });
     }
     
-    const credsData = await fs.readFile(credsPath, 'utf8');
+    const files = await fs.readdir(sessionPath);
+    const fileList = [];
     
-    res.setHeader('Content-Type', 'application/json');
-    res.setHeader('Content-Disposition', `attachment; filename=${sessionId}-creds.json`);
-    res.send(credsData);
+    for (const file of files) {
+      const filePath = path.join(sessionPath, file);
+      const stats = await fs.stat(filePath);
+      
+      if (stats.isFile()) {
+        fileList.push({
+          name: file,
+          size: stats.size,
+          modified: stats.mtime,
+          type: path.extname(file) || 'file'
+        });
+      }
+    }
+    
+    res.json({
+      success: true,
+      sessionId,
+      files: fileList
+    });
   } catch (error) {
-    console.error('Admin Download Session Creds Error:', error);
+    console.error('Admin Get Session Files Error:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to download session credentials'
+      error: 'Failed to get session files'
+    });
+  }
+});
+
+// Download specific file from session
+app.get('/api/admin/sessions/:sessionId/files/:filename', verifyAdmin, async (req, res) => {
+  try {
+    let { sessionId, filename } = req.params;
+    
+    // Handle VINSMOKE@ prefix - if not present, add it
+    if (!sessionId.startsWith('VINSMOKE@')) {
+      sessionId = `VINSMOKE@${sessionId}`;
+    }
+    
+    // Security: prevent directory traversal
+    if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid filename'
+      });
+    }
+    
+    const sessionPath = path.join(__dirname, 'sessions', sessionId);
+    const filePath = path.join(sessionPath, filename);
+    
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({
+        success: false,
+        error: 'File not found'
+      });
+    }
+    
+    const stats = await fs.stat(filePath);
+    if (!stats.isFile()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Not a file'
+      });
+    }
+    
+    // Set appropriate headers for file download
+    const ext = path.extname(filename).toLowerCase();
+    let contentType = 'application/octet-stream';
+    
+    if (ext === '.json') contentType = 'application/json';
+    else if (ext === '.txt') contentType = 'text/plain';
+    else if (ext === '.log') contentType = 'text/plain';
+    
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Length', stats.size);
+    
+    // Stream the file
+    const fileStream = fs.createReadStream(filePath);
+    fileStream.pipe(res);
+    
+  } catch (error) {
+    console.error('Admin Download Session File Error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to download file'
+    });
+  }
+});
+
+// Download all session files as ZIP
+app.get('/api/admin/sessions/:sessionId/download', verifyAdmin, async (req, res) => {
+  try {
+    let { sessionId } = req.params;
+    const originalSessionId = sessionId;
+    
+    // Handle VINSMOKE@ prefix - if not present, add it
+    if (!sessionId.startsWith('VINSMOKE@')) {
+      sessionId = `VINSMOKE@${sessionId}`;
+    }
+    
+    const sessionPath = path.join(__dirname, 'sessions', sessionId);
+    
+    if (!fs.existsSync(sessionPath)) {
+      return res.status(404).json({
+        success: false,
+        error: 'Session not found'
+      });
+    }
+    
+    const archiver = require('archiver');
+    const archive = archiver('zip', { zlib: { level: 9 } });
+    
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${originalSessionId}-session.zip"`);
+    
+    archive.pipe(res);
+    
+    // Add all files from session directory
+    const files = await fs.readdir(sessionPath);
+    for (const file of files) {
+      const filePath = path.join(sessionPath, file);
+      const stats = await fs.stat(filePath);
+      
+      if (stats.isFile()) {
+        archive.file(filePath, { name: file });
+      }
+    }
+    
+    await archive.finalize();
+    
+  } catch (error) {
+    console.error('Admin Download Session Archive Error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to download session files'
     });
   }
 });
@@ -1185,9 +1331,19 @@ io.on('connection', (socket) => {
           const clientCountAfterDelay = roomAfterDelay ? roomAfterDelay.size : 0;
 
           if (clientCountAfterDelay === 0) {
-            console.log(`🗑️ Cleaning up abandoned session: ${currentSessionId}`);
             try {
-              // Stop the WhatsApp session if it's still active
+              // Check if session was completed successfully
+              const sessionData = whatsappService.activeSessions.get(currentSessionId);
+              const isCompleted = sessionData && sessionData.completed;
+              
+              if (isCompleted) {
+                console.log(`🔒 Preserving completed session: ${currentSessionId} (not cleaning up)`);
+                // Don't delete completed sessions - they should be preserved for download
+                return;
+              }
+              
+              console.log(`🗑️ Cleaning up abandoned session: ${currentSessionId}`);
+              // Only stop active/incomplete sessions
               await whatsappService.stopSession(currentSessionId);
             } catch (error) {
               console.error('Error cleaning up session:', error);
