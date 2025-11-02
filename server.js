@@ -304,9 +304,11 @@ app.post('/api/session/qr', async (req, res) => {
   try {
     const sessionId = uuidv4();
     const result = await whatsappService.generateQR(sessionId);
+    const fullSessionId = `VINSMOKE@${sessionId}`;
+    
     res.json({
       success: true,
-      sessionId,
+      sessionId: fullSessionId,
       qrCode: result.qrCode
     });
   } catch (error) {
@@ -331,14 +333,15 @@ app.post('/api/session/pairing', async (req, res) => {
     }
 
     const sessionId = uuidv4();
-    console.log(`🆔 Generated session ID: ${sessionId}`);
+    const fullSessionId = `VINSMOKE@${sessionId}`;
+    console.log(`🆔 Generated session ID: ${fullSessionId}`);
     
     const result = await whatsappService.generatePairingCode(sessionId, phoneNumber);
-    console.log(`✅ Pairing code generated successfully for session: ${sessionId}`);
+    console.log(`✅ Pairing code generated successfully for session: ${fullSessionId}`);
 
     res.json({
       success: true,
-      sessionId,
+      sessionId: fullSessionId,
       pairingCode: result.pairingCode,
       environment: process.env.NODE_ENV || 'development'
     });
@@ -618,7 +621,13 @@ app.get('/api/admin/sessions', verifyAdmin, async (req, res) => {
 
 app.delete('/api/admin/sessions/:sessionId', verifyAdmin, async (req, res) => {
   try {
-    const { sessionId } = req.params;
+    let { sessionId } = req.params;
+    
+    // Handle VINSMOKE@ prefix - if not present, add it
+    if (!sessionId.startsWith('VINSMOKE@')) {
+      sessionId = `VINSMOKE@${sessionId}`;
+    }
+    
     await whatsappService.deleteSession(sessionId);
     res.json({
       success: true,
@@ -648,9 +657,16 @@ app.get('/api/admin/sessions/download', verifyAdmin, async (req, res) => {
   }
 });
 
+// Download session creds.json (Admin Panel)
 app.get('/api/admin/sessions/:sessionId/download', verifyAdmin, async (req, res) => {
   try {
-    const { sessionId } = req.params;
+    let { sessionId } = req.params;
+    
+    // Handle VINSMOKE@ prefix - if not present, add it
+    if (!sessionId.startsWith('VINSMOKE@')) {
+      sessionId = `VINSMOKE@${sessionId}`;
+    }
+    
     const sessionPath = path.join(__dirname, 'sessions', sessionId);
     const credsPath = path.join(sessionPath, 'creds.json');
     
@@ -661,16 +677,242 @@ app.get('/api/admin/sessions/:sessionId/download', verifyAdmin, async (req, res)
       });
     }
     
-    const credsData = await fs.readFile(credsPath, 'utf8');
+    const stats = await fs.stat(credsPath);
     
     res.setHeader('Content-Type', 'application/json');
-    res.setHeader('Content-Disposition', `attachment; filename=${sessionId}-creds.json`);
-    res.send(credsData);
+    res.setHeader('Content-Disposition', 'attachment; filename="creds.json"');
+    res.setHeader('Content-Length', stats.size);
+    
+    // Stream the file to avoid loading into memory
+    const fileStream = fs.createReadStream(credsPath);
+    fileStream.pipe(res);
+    
   } catch (error) {
     console.error('Admin Download Session Creds Error:', error);
     res.status(500).json({
       success: false,
       error: 'Failed to download session credentials'
+    });
+  }
+});
+
+// Get session files list (for bot integration)
+app.get('/api/admin/sessions/:sessionId/files', verifyAdmin, async (req, res) => {
+  try {
+    let { sessionId } = req.params;
+    
+    // Handle VINSMOKE@ prefix - if not present, add it
+    if (!sessionId.startsWith('VINSMOKE@')) {
+      sessionId = `VINSMOKE@${sessionId}`;
+    }
+    
+    const sessionPath = path.join(__dirname, 'sessions', sessionId);
+    
+    if (!fs.existsSync(sessionPath)) {
+      return res.status(404).json({
+        success: false,
+        error: 'Session not found'
+      });
+    }
+    
+    const files = await fs.readdir(sessionPath);
+    const fileList = [];
+    
+    for (const file of files) {
+      const filePath = path.join(sessionPath, file);
+      const stats = await fs.stat(filePath);
+      
+      if (stats.isFile()) {
+        fileList.push({
+          name: file,
+          size: stats.size,
+          modified: stats.mtime
+        });
+      }
+    }
+    
+    res.json({
+      success: true,
+      sessionId,
+      files: fileList
+    });
+  } catch (error) {
+    console.error('Get Session Files Error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get session files'
+    });
+  }
+});
+
+// Download individual session file (for bot integration)
+app.get('/api/admin/sessions/:sessionId/files/:filename', verifyAdmin, async (req, res) => {
+  try {
+    let { sessionId, filename } = req.params;
+    
+    // Handle VINSMOKE@ prefix - if not present, add it
+    if (!sessionId.startsWith('VINSMOKE@')) {
+      sessionId = `VINSMOKE@${sessionId}`;
+    }
+    
+    // Security: prevent directory traversal
+    if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid filename'
+      });
+    }
+    
+    const sessionPath = path.join(__dirname, 'sessions', sessionId);
+    const filePath = path.join(sessionPath, filename);
+    
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({
+        success: false,
+        error: 'File not found'
+      });
+    }
+    
+    const stats = await fs.stat(filePath);
+    if (!stats.isFile()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Not a file'
+      });
+    }
+    
+    // Set appropriate headers - keep original filename
+    const ext = path.extname(filename).toLowerCase();
+    let contentType = 'application/octet-stream';
+    
+    if (ext === '.json') contentType = 'application/json';
+    else if (ext === '.txt') contentType = 'text/plain';
+    
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Length', stats.size);
+    
+    // Stream the file
+    const fileStream = fs.createReadStream(filePath);
+    fileStream.pipe(res);
+    
+  } catch (error) {
+    console.error('Download Session File Error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to download file'
+    });
+  }
+});
+
+// Public Bot Integration Endpoints (No Auth Required)
+
+// Get session files list (for bots)
+app.get('/api/session/:sessionId/files', async (req, res) => {
+  try {
+    let { sessionId } = req.params;
+    
+    // Handle VINSMOKE@ prefix - if not present, add it
+    if (!sessionId.startsWith('VINSMOKE@')) {
+      sessionId = `VINSMOKE@${sessionId}`;
+    }
+    
+    const sessionPath = path.join(__dirname, 'sessions', sessionId);
+    
+    if (!fs.existsSync(sessionPath)) {
+      return res.status(404).json({
+        success: false,
+        error: 'Session not found'
+      });
+    }
+    
+    const files = await fs.readdir(sessionPath);
+    const fileList = [];
+    
+    for (const file of files) {
+      const filePath = path.join(sessionPath, file);
+      const stats = await fs.stat(filePath);
+      
+      if (stats.isFile()) {
+        fileList.push({
+          name: file,
+          size: stats.size,
+          modified: stats.mtime,
+          downloadUrl: `/api/session/${encodeURIComponent(sessionId)}/file/${encodeURIComponent(file)}`
+        });
+      }
+    }
+    
+    res.json({
+      success: true,
+      sessionId,
+      files: fileList
+    });
+  } catch (error) {
+    console.error('Get Session Files Error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get session files'
+    });
+  }
+});
+
+// Download individual session file (for bots)
+app.get('/api/session/:sessionId/file/:filename', async (req, res) => {
+  try {
+    let { sessionId, filename } = req.params;
+    
+    // Handle VINSMOKE@ prefix - if not present, add it
+    if (!sessionId.startsWith('VINSMOKE@')) {
+      sessionId = `VINSMOKE@${sessionId}`;
+    }
+    
+    // Security: prevent directory traversal
+    if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid filename'
+      });
+    }
+    
+    const sessionPath = path.join(__dirname, 'sessions', sessionId);
+    const filePath = path.join(sessionPath, filename);
+    
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({
+        success: false,
+        error: 'File not found'
+      });
+    }
+    
+    const stats = await fs.stat(filePath);
+    if (!stats.isFile()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Not a file'
+      });
+    }
+    
+    // Set appropriate headers - keep original filename
+    const ext = path.extname(filename).toLowerCase();
+    let contentType = 'application/octet-stream';
+    
+    if (ext === '.json') contentType = 'application/json';
+    else if (ext === '.txt') contentType = 'text/plain';
+    
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Length', stats.size);
+    
+    // Stream the file
+    const fileStream = fs.createReadStream(filePath);
+    fileStream.pipe(res);
+    
+  } catch (error) {
+    console.error('Download Session File Error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to download file'
     });
   }
 });

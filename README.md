@@ -1,213 +1,418 @@
-# 🚀 Vinsmoke Bot Backend
+# My Vinsmoke Backend API Guide
 
-**Enterprise-grade WhatsApp Bot Backend API** with advanced session management, security, and performance optimizations.
+Just my personal reference for all the API calls. No fancy stuff, just what I need to know.
 
-[![Node.js](https://img.shields.io/badge/Node.js-20.x-green.svg)](https://nodejs.org/)
-[![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://docker.com/)
-[![Production](https://img.shields.io/badge/Production-Ready-brightgreen.svg)](https://render.com/)
+**Backend URL:** `https://vnsmk-back.onrender.com`  
+**Admin Token:** Get from GitHub OAuth (frontend handles this)
 
-## ✨ Features
+## Session Management
 
-- 🔐 **Enterprise Security** - Helmet.js, rate limiting, CORS protection
-- ⚡ **High Performance** - Compression, optimized middleware, caching
-- 🐳 **Container Ready** - Optimized Docker with health checks
-- 🌐 **Cloud Native** - Deploy on Render, Railway, Heroku, or any platform
-- 📱 **WhatsApp Integration** - Full Baileys.js implementation
-- 📁 **Session Management** - Complete file-based session handling
-- 🛡️ **Rate Limited** - 100 requests per 15 minutes per IP
-- 📊 **Health Monitoring** - Built-in health checks and logging
-
-## 🔌 API Endpoints
-
-### Core Session Management
-```http
-POST   /api/session/qr                    # Generate QR code
-POST   /api/session/pairing               # Generate pairing code  
-GET    /api/session/:sessionId            # Get session info
-DELETE /api/session/:sessionId            # Delete session
-```
-
-### Session Files API (Bot Integration)
-```http
-GET    /api/session/:sessionId/files      # Get files metadata
-GET    /api/session/:sessionId/filelist   # Get file list + URLs
-GET    /api/session/:sessionId/file/:name # Download individual file
-```
-
-### System & Admin
-```http
-GET    /api/health                        # Health check
-GET    /api/plugins                       # Get plugins
-GET    /api/faqs                          # Get FAQs
-GET    /api/admin/*                       # Admin endpoints (auth required)
-```
-
-## 🤖 Bot Integration Example
-
+### Create New Session (QR Code)
 ```javascript
-const API_BASE = 'https://your-backend.onrender.com';
+// POST /api/session/qr
+const response = await fetch('https://vnsmk-back.onrender.com/api/session/qr', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' }
+});
 
-async function syncSessionFiles(sessionId) {
+const data = await response.json();
+// Returns: { success: true, sessionId: "VINSMOKE@uuid", qrCode: "data:image/png..." }
+```
+
+### Create Session with Phone (Pairing Code)
+```javascript
+// POST /api/session/pairing
+const response = await fetch('https://vnsmk-back.onrender.com/api/session/pairing', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ phoneNumber: '+1234567890' })
+});
+
+const data = await response.json();
+// Returns: { success: true, sessionId: "VINSMOKE@uuid", pairingCode: "ABCD-EFGH" }
+```
+
+### Check Session Status
+```javascript
+// GET /api/session/:sessionId
+const sessionId = 'VINSMOKE@my-session'; // or just 'my-session' (auto-adds prefix)
+const response = await fetch(`https://vnsmk-back.onrender.com/api/session/${sessionId}`);
+const data = await response.json();
+// Returns: { success: true, session: { connected: true, user: {...} } }
+```
+
+### Delete Session
+```javascript
+// DELETE /api/session/:sessionId
+const response = await fetch(`https://vnsmk-back.onrender.com/api/session/${sessionId}`, {
+  method: 'DELETE'
+});
+// Returns: { success: true, message: "Session deleted successfully" }
+```
+
+## Admin Endpoints (Need GitHub Token)
+
+### Get All Sessions
+```javascript
+// GET /api/admin/sessions
+const response = await fetch('https://vnsmk-back.onrender.com/api/admin/sessions', {
+  headers: { 'Authorization': 'Bearer YOUR_GITHUB_TOKEN' }
+});
+
+const data = await response.json();
+// Returns: { success: true, sessions: [{ sessionId, createdAt, expiresAt, isGood }] }
+```
+
+### Delete Session (Admin)
+```javascript
+// DELETE /api/admin/sessions/:sessionId
+const response = await fetch(`https://vnsmk-back.onrender.com/api/admin/sessions/${sessionId}`, {
+  method: 'DELETE',
+  headers: { 'Authorization': 'Bearer YOUR_GITHUB_TOKEN' }
+});
+// Returns: { success: true, message: "Session deleted successfully" }
+```
+
+## File Downloads
+
+### Download Session Credentials (Admin Panel)
+```javascript
+// GET /api/admin/sessions/:sessionId/download
+// Downloads ONLY creds.json file
+
+const response = await fetch(`https://vnsmk-back.onrender.com/api/admin/sessions/${sessionId}/download`, {
+  headers: { 'Authorization': 'Bearer YOUR_GITHUB_TOKEN' }
+});
+
+if (response.ok) {
+  const blob = await response.blob();
+  // Save as 'creds.json'
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'creds.json';
+  a.click();
+}
+```
+
+### Get Session Files List (Bot Integration)
+```javascript
+// GET /api/admin/sessions/:sessionId/files
+const response = await fetch(`https://vnsmk-back.onrender.com/api/admin/sessions/${sessionId}/files`, {
+  headers: { 'Authorization': 'Bearer YOUR_GITHUB_TOKEN' }
+});
+
+const data = await response.json();
+// Returns: { 
+//   success: true, 
+//   sessionId: "VINSMOKE@session", 
+//   files: [
+//     { name: "creds.json", size: 2048, modified: "2024-01-01T00:00:00.000Z" },
+//     { name: "keys.json", size: 1024, modified: "2024-01-01T00:00:00.000Z" }
+//   ]
+// }
+```
+
+### Download Individual File (Bot Integration)
+```javascript
+// GET /api/admin/sessions/:sessionId/files/:filename
+const filename = 'creds.json'; // or 'keys.json', 'pre-keys.json', etc.
+const response = await fetch(`https://vnsmk-back.onrender.com/api/admin/sessions/${sessionId}/files/${filename}`, {
+  headers: { 'Authorization': 'Bearer YOUR_GITHUB_TOKEN' }
+});
+
+if (response.ok) {
+  const blob = await response.blob();
+  // File keeps original name
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename; // Same name as in backend
+  a.click();
+}
+```
+
+## Using Axios (If You Prefer)
+
+### Download with Axios
+```javascript
+import axios from 'axios';
+
+// Download creds.json
+const downloadCreds = async (sessionId, token) => {
   try {
-    // Get list of available files
-    const response = await fetch(`${API_BASE}/api/session/${sessionId}/filelist`);
+    const response = await axios.get(`https://vnsmk-back.onrender.com/api/admin/sessions/${sessionId}/download`, {
+      headers: { 'Authorization': `Bearer ${token}` },
+      responseType: 'blob'
+    });
+    
+    const url = URL.createObjectURL(response.data);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'creds.json';
+    a.click();
+  } catch (error) {
+    console.error('Download failed:', error);
+  }
+};
+
+// Get files list
+const getFiles = async (sessionId, token) => {
+  try {
+    const response = await axios.get(`https://vnsmk-back.onrender.com/api/admin/sessions/${sessionId}/files`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    
+    return response.data.files;
+  } catch (error) {
+    console.error('Get files failed:', error);
+  }
+};
+
+// Download specific file
+const downloadFile = async (sessionId, filename, token) => {
+  try {
+    const response = await axios.get(`https://vnsmk-back.onrender.com/api/admin/sessions/${sessionId}/files/${filename}`, {
+      headers: { 'Authorization': `Bearer ${token}` },
+      responseType: 'blob'
+    });
+    
+    const url = URL.createObjectURL(response.data);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+  } catch (error) {
+    console.error('Download failed:', error);
+  }
+};
+```
+
+## Public Bot Endpoints (No Auth Required!)
+
+### Get Session Files List (Public)
+```javascript
+// GET /api/session/:sessionId/files
+// NO TOKEN NEEDED! Perfect for deployed bots
+
+const getSessionFiles = async (sessionId) => {
+  const response = await fetch(`https://vnsmk-back.onrender.com/api/session/${sessionId}/files`);
+  const data = await response.json();
+  
+  // Returns: { 
+  //   success: true, 
+  //   sessionId: "VINSMOKE@session", 
+  //   files: [
+  //     { 
+  //       name: "creds.json", 
+  //       size: 2048, 
+  //       modified: "2024-01-01T00:00:00.000Z",
+  //       downloadUrl: "/api/session/VINSMOKE@session/file/creds.json"
+  //     }
+  //   ]
+  // }
+  
+  return data.files;
+};
+```
+
+### Download Individual File (Public)
+```javascript
+// GET /api/session/:sessionId/file/:filename
+// NO TOKEN NEEDED!
+
+const downloadFile = async (sessionId, filename) => {
+  const response = await fetch(`https://vnsmk-back.onrender.com/api/session/${sessionId}/file/${filename}`);
+  
+  if (response.ok) {
+    const buffer = await response.arrayBuffer();
+    return Buffer.from(buffer);
+  }
+  throw new Error('Download failed');
+};
+```
+
+## Bot Integration Examples
+
+### Complete Bot Session Download (No Auth!)
+```javascript
+const fs = require('fs');
+const path = require('path');
+
+const downloadSessionForBot = async (sessionId) => {
+  try {
+    // 1. Get files list (NO TOKEN NEEDED!)
+    const response = await fetch(`https://vnsmk-back.onrender.com/api/session/${sessionId}/files`);
     const { files } = await response.json();
     
-    console.log(`Found ${files.length} session files`);
+    console.log(`Found ${files.length} files for session ${sessionId}`);
     
-    // Download each file
-    for (const file of files) {
-      const fileResponse = await fetch(`${API_BASE}/api/session/${sessionId}/file/${file.name}`);
-      const buffer = await fileResponse.buffer();
-      
-      // Save to local session directory
-      const localPath = `./sessions/${sessionId}/${file.name}`;
-      await fs.writeFile(localPath, buffer);
-      
-      console.log(`✅ Downloaded: ${file.name} (${file.size} bytes)`);
+    // 2. Create local session directory
+    const sessionDir = `./sessions/${sessionId}`;
+    if (!fs.existsSync(sessionDir)) {
+      fs.mkdirSync(sessionDir, { recursive: true });
     }
     
+    // 3. Download each file (NO TOKEN NEEDED!)
+    for (const file of files) {
+      const fileResponse = await fetch(`https://vnsmk-back.onrender.com/api/session/${sessionId}/file/${file.name}`);
+      
+      if (fileResponse.ok) {
+        const buffer = await fileResponse.arrayBuffer();
+        fs.writeFileSync(path.join(sessionDir, file.name), Buffer.from(buffer));
+        console.log(`✅ Downloaded: ${file.name} (${file.size} bytes)`);
+      } else {
+        console.error(`❌ Failed to download: ${file.name}`);
+      }
+    }
+    
+    console.log(`🎉 Session ${sessionId} downloaded successfully!`);
     return files.length;
+    
   } catch (error) {
-    console.error('❌ Session sync failed:', error);
+    console.error('❌ Download failed:', error);
     throw error;
+  }
+};
+
+// Usage in your bot
+await downloadSessionForBot('VINSMOKE@my-session');
+```
+
+### Axios Version (For Bots)
+```javascript
+const axios = require('axios');
+const fs = require('fs');
+const path = require('path');
+
+const downloadWithAxios = async (sessionId) => {
+  try {
+    // Get files list
+    const { data } = await axios.get(`https://vnsmk-back.onrender.com/api/session/${sessionId}/files`);
+    
+    // Download each file
+    for (const file of data.files) {
+      const response = await axios.get(`https://vnsmk-back.onrender.com/api/session/${sessionId}/file/${file.name}`, {
+        responseType: 'arraybuffer'
+      });
+      
+      fs.writeFileSync(`./sessions/${sessionId}/${file.name}`, response.data);
+      console.log(`Downloaded: ${file.name}`);
+    }
+  } catch (error) {
+    console.error('Download failed:', error);
+  }
+};
+```
+
+### Simple One-File Download
+```javascript
+// Just download creds.json
+const downloadCreds = async (sessionId) => {
+  const response = await fetch(`https://vnsmk-back.onrender.com/api/session/${sessionId}/file/creds.json`);
+  
+  if (response.ok) {
+    const credsData = await response.text();
+    fs.writeFileSync('./creds.json', credsData);
+    console.log('✅ creds.json downloaded!');
+  }
+};
+```
+
+## Other Endpoints
+
+### Health Check
+```javascript
+// GET /api/health
+const response = await fetch('https://vnsmk-back.onrender.com/api/health');
+// Returns: { status: "healthy", timestamp: "...", uptime: 3600 }
+```
+
+### Get Public Data
+```javascript
+// GET /api/plugins - Get approved plugins
+// GET /api/faqs - Get FAQ data  
+// GET /api/support - Get support info
+```
+
+## For Bot Developers (Public Access!)
+
+### Perfect for Deployed Bots
+```javascript
+// Your users can deploy your bot anywhere and it will work!
+// No tokens, no auth, just session ID
+
+const BACKEND_URL = 'https://vnsmk-back.onrender.com';
+
+class VinsmokeBot {
+  async loadSession(sessionId) {
+    try {
+      // Get all session files
+      const response = await fetch(`${BACKEND_URL}/api/session/${sessionId}/files`);
+      const { files } = await response.json();
+      
+      // Download each file to local sessions folder
+      for (const file of files) {
+        const fileResponse = await fetch(`${BACKEND_URL}/api/session/${sessionId}/file/${file.name}`);
+        const buffer = await fileResponse.arrayBuffer();
+        
+        // Save to your bot's session directory
+        fs.writeFileSync(`./sessions/${sessionId}/${file.name}`, Buffer.from(buffer));
+      }
+      
+      console.log(`Session ${sessionId} loaded successfully!`);
+      return true;
+    } catch (error) {
+      console.error('Failed to load session:', error);
+      return false;
+    }
   }
 }
 
 // Usage
-await syncSessionFiles('your-session-id');
+const bot = new VinsmokeBot();
+await bot.loadSession('VINSMOKE@user-session');
 ```
 
-## ⚙️ Environment Variables
+### Environment Variables for Bots
+```javascript
+// In your bot's .env file
+VINSMOKE_BACKEND_URL=https://vnsmk-back.onrender.com
+VINSMOKE_SESSION_ID=VINSMOKE@my-session
 
-## ⚙️ Environment Variables
+// In your bot code
+const sessionId = process.env.VINSMOKE_SESSION_ID;
+const backendUrl = process.env.VINSMOKE_BACKEND_URL;
 
-### 🎯 **For Render Deployment (Only 1 Required!)**
+const loadSession = async () => {
+  const response = await fetch(`${backendUrl}/api/session/${sessionId}/files`);
+  // ... rest of download logic
+};
+```
+
+## Important Notes
+
+- **Session ID Format:** Always `VINSMOKE@sessionId` in storage, but you can use just `sessionId` in API calls
+- **File Names:** All downloads keep original filenames from backend
+- **Good Sessions:** Sessions that connect successfully are marked as "good" and won't be auto-deleted
+- **Public Access:** Bot endpoints (`/api/session/`) don't need authentication!
+- **Admin Access:** Admin endpoints (`/api/admin/`) need GitHub OAuth token
+- **Rate Limit:** 100 requests per 15 minutes per IP
+
+## Quick Test Commands
+
 ```bash
-FRONTEND_URL=https://your-frontend.vercel.app
+# Health check
+curl https://vnsmk-back.onrender.com/api/health
+
+# Create session
+curl -X POST https://vnsmk-back.onrender.com/api/session/qr
+
+# Get session files (need token)
+curl -H "Authorization: Bearer YOUR_TOKEN" https://vnsmk-back.onrender.com/api/admin/sessions/VINSMOKE@session-id/files
+
+# Download creds.json (need token)
+curl -H "Authorization: Bearer YOUR_TOKEN" https://vnsmk-back.onrender.com/api/admin/sessions/VINSMOKE@session-id/download -o creds.json
 ```
 
-### 🔐 **Required: Admin Authentication**
-```bash
-GITHUB_CLIENT_ID=your_client_id       # For admin login
-GITHUB_CLIENT_SECRET=your_secret      # For admin login
-```
-
-**That's it!** Everything else (PORT, NODE_ENV, CORS, security, rate limiting, etc.) has smart defaults and is handled automatically by Render.
-
-### 🎯 **Render Deployment Steps:**
-1. Connect your GitHub repo to Render
-2. Set these 3 environment variables:
-   - `FRONTEND_URL=https://your-frontend.vercel.app`
-   - `GITHUB_CLIENT_ID=your_github_client_id`
-   - `GITHUB_CLIENT_SECRET=your_github_client_secret`
-3. Deploy! ✨
-
-## 🚀 Deployment Options
-
-### 🆓 **Free Tier Platforms**
-
-#### Render.com (Easy Setup)
-- **Free Plan**: Sleeps after 15min inactivity
-- **Paid Plan**: $7/month, always on
-- Uses included `render.yaml` configuration
-
-#### Railway (Better Performance)
-- **Free**: $5/month credit (usually enough)
-- **No sleep time**, better than Render free
-- Excellent for development and small apps
-
-#### Vercel (Serverless)
-- **Generous free tier** with global CDN
-- Uses included `vercel.json` configuration
-- Best for API-only deployments
-
-### 🚀 **Quick Deploy Steps**
-
-#### 1. Setup GitHub OAuth App
-1. Go to GitHub → Settings → Developer settings → OAuth Apps
-2. Click "New OAuth App"
-3. Fill in:
-   - **Application name**: `Vinsmoke Bot Admin`
-   - **Homepage URL**: `https://your-frontend.vercel.app`
-   - **Authorization callback URL**: `https://your-backend.onrender.com/auth/callback`
-4. Save and copy the Client ID and Client Secret
-
-#### 2. Deploy to Render
-1. **Fork/Clone**: https://github.com/manjisama1/vnsmk-back
-2. **Connect to Render**: Import your GitHub repo
-3. **Set Environment Variables**:
-   ```bash
-   FRONTEND_URL=https://your-frontend.vercel.app
-   BACKEND_URL=https://your-backend.onrender.com
-   GITHUB_CLIENT_ID=your_client_id_from_step_1
-   GITHUB_CLIENT_SECRET=your_client_secret_from_step_1
-   ```
-4. **Deploy**: Render handles the rest automatically
-
-### ⚙️ **Manual Configuration**
-If not using config files, set these build settings:
-- **Build Command**: `npm ci --only=production`
-- **Start Command**: `node server.js`
-- **Node Version**: 20.x
-
-### Railway
-1. Connect your GitHub repository
-2. Set root directory to `backend`
-3. Railway will auto-detect Node.js and use package.json
-
-### Heroku
-```bash
-# If deploying from backend folder
-git subtree push --prefix=backend heroku main
-
-# Or create a separate repo for backend
-```
-
-### Docker
-```bash
-docker build -t vinsmoke-backend .
-docker run -p 5000:5000 -e NODE_ENV=production vinsmoke-backend
-```
-
-### Manual/VPS
-```bash
-# Clone and setup
-git clone <your-repo>
-cd backend
-npm install
-
-# Set environment variables
-cp .env.example .env
-# Edit .env with your values
-
-# Start with PM2 (recommended for production)
-npm install -g pm2
-pm2 start server.js --name "vinsmoke-backend"
-
-# Or start directly
-npm start
-```
-
-### Environment Variables for Production
-```bash
-NODE_ENV=production
-PORT=5000
-FRONTEND_URL=https://your-frontend-domain.com
-GITHUB_CLIENT_ID=your_github_client_id
-GITHUB_CLIENT_SECRET=your_github_client_secret
-BACKEND_URL=https://your-backend-domain.com
-```
-
-## File Structure
-```
-sessions/
-├── session-id-1/
-│   ├── creds.json
-│   ├── keys.json
-│   └── ...
-└── session-id-2/
-    ├── creds.json
-    ├── keys.json
-    └── ...
-```
+That's it! Everything I need to know about my backend API.

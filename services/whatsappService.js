@@ -55,8 +55,8 @@ class WhatsAppService {
 
     createSocket(state, version, isPairing = false) {
         // Use Chrome for pairing in production for better compatibility
-        const browser = isPairing && process.env.NODE_ENV === 'production' 
-            ? Browsers.windows("Chrome") 
+        const browser = isPairing && process.env.NODE_ENV === 'production'
+            ? Browsers.windows("Chrome")
             : Browsers.macOS("Safari");
 
         const sock = makeWASocket({
@@ -84,14 +84,16 @@ class WhatsAppService {
                 throw new Error(`Maximum sessions limit reached (${maxSessions})`);
             }
 
-            const sessionPath = path.join(this.sessionsDir, sessionId);
+            // Ensure VINSMOKE@ prefix
+            const fullSessionId = sessionId.startsWith('VINSMOKE@') ? sessionId : `VINSMOKE@${sessionId}`;
+            const sessionPath = path.join(this.sessionsDir, fullSessionId);
             await fs.ensureDir(sessionPath);
 
             const version = await this.checkVersion();
             const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
             const sock = this.createSocket(state, version);
 
-            return await this.handleQRConnection(sock, sessionId, saveCreds);
+            return await this.handleQRConnection(sock, fullSessionId, saveCreds);
         } catch (error) {
             console.error('QR generation error:', error);
             throw error;
@@ -109,14 +111,16 @@ class WhatsAppService {
             const cleanPhone = phoneNumber.replace(/[\s\-\(\)]/g, '');
             const formattedPhone = cleanPhone.startsWith('+') ? cleanPhone.slice(1) : cleanPhone;
 
-            const sessionPath = path.join(this.sessionsDir, sessionId);
+            // Ensure VINSMOKE@ prefix
+            const fullSessionId = sessionId.startsWith('VINSMOKE@') ? sessionId : `VINSMOKE@${sessionId}`;
+            const sessionPath = path.join(this.sessionsDir, fullSessionId);
             await fs.ensureDir(sessionPath);
 
             const version = await this.checkVersion();
             const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
             const sock = this.createSocket(state, version, true);
 
-            return await this.handlePairingConnection(sock, sessionId, saveCreds, formattedPhone);
+            return await this.handlePairingConnection(sock, fullSessionId, saveCreds, formattedPhone);
         } catch (error) {
             console.error('Pairing code generation error:', error);
             throw error;
@@ -178,12 +182,12 @@ class WhatsAppService {
             try {
                 if (!sock.authState.creds.registered) {
                     console.log(`� Requiesting pairing code for ${phoneNumber} in ${process.env.NODE_ENV || 'development'} mode`);
-                    
+
                     // Add retry logic for production
                     let code;
                     let attempts = 0;
                     const maxAttempts = process.env.NODE_ENV === 'production' ? 3 : 1;
-                    
+
                     while (attempts < maxAttempts) {
                         try {
                             code = await sock.requestPairingCode(phoneNumber);
@@ -192,11 +196,11 @@ class WhatsAppService {
                         } catch (error) {
                             attempts++;
                             console.error(`❌ Pairing code attempt ${attempts} failed:`, error.message);
-                            
+
                             if (attempts >= maxAttempts) {
                                 throw error;
                             }
-                            
+
                             // Wait before retry
                             await new Promise(r => setTimeout(r, 2000));
                         }
@@ -242,14 +246,15 @@ class WhatsAppService {
     }
 
     async handleSuccessfulConnection(sock, sessionId) {
-        const customSessionId = `VINSMOKEm@${sessionId}`;
+        // Ensure VINSMOKE@ prefix
+        const fullSessionId = sessionId.startsWith('VINSMOKE@') ? sessionId : `VINSMOKE@${sessionId}`;
 
         try {
             const normalizedJid = jidNormalizedUser(sock.user.id);
 
             // Send session ID as disappearing message
             await sock.sendMessage(normalizedJid, {
-                text: customSessionId
+                text: fullSessionId
             }, {
                 ephemeralExpiration: 86400
             });
@@ -262,10 +267,12 @@ class WhatsAppService {
             console.log(`📤 Messages sent to session: ${sessionId}`);
 
             this.io.to(sessionId).emit('session-connected', {
-                sessionId: customSessionId,
+                sessionId: fullSessionId,
                 status: 'connected'
             });
 
+            // Mark session as good (successful connection)
+            await this.markSessionAsGood(fullSessionId);
             await this.trackSession(sessionId);
             this.activeSessions.delete(sessionId);
 
@@ -427,6 +434,22 @@ class WhatsAppService {
         }
     }
 
+    async markSessionAsGood(sessionId) {
+        try {
+            const tracking = await fs.readJson(this.sessionTrackingFile);
+            const session = tracking.sessions.find(s => s.sessionId === sessionId);
+
+            if (session) {
+                session.isGood = true;
+                session.connectedAt = new Date().toISOString();
+                await fs.writeJson(this.sessionTrackingFile, tracking, { spaces: 2 });
+                console.log(`✅ Session marked as good: ${sessionId}`);
+            }
+        } catch (error) {
+            console.error('Error marking session as good:', error);
+        }
+    }
+
     async cleanupSession(sessionId) {
         try {
             const sessionPath = path.join(this.sessionsDir, sessionId);
@@ -509,10 +532,18 @@ class WhatsAppService {
             const validSessions = [];
 
             for (const session of tracking.sessions) {
-                if (new Date(session.expiresAt) <= now) {
+                const isExpired = new Date(session.expiresAt) <= now;
+                const isGoodSession = session.isGood === true;
+
+                if (isExpired && !isGoodSession) {
                     await this.cleanupSession(session.sessionId);
                     console.log(`🗑️ Deleted expired session: ${session.sessionId}`);
                 } else {
+                    if (isExpired && isGoodSession) {
+                        console.log(`🔒 Preserving good session: ${session.sessionId} (connected successfully)`);
+                        // Extend expiry for good sessions
+                        session.expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(); // +7 days
+                    }
                     validSessions.push(session);
                 }
             }
@@ -545,11 +576,12 @@ class WhatsAppService {
     async cleanupBadSessions() {
         try {
             console.log('🔍 Scanning for bad session folders...');
-            
+
             if (!(await fs.pathExists(this.sessionsDir))) {
                 return;
             }
 
+            const tracking = await fs.readJson(this.sessionTrackingFile);
             const sessionDirs = await fs.readdir(this.sessionsDir);
             let badSessionsCount = 0;
 
@@ -558,8 +590,17 @@ class WhatsAppService {
                 const stat = await fs.stat(sessionPath);
 
                 if (stat.isDirectory()) {
+                    // Check if session is marked as good in tracking
+                    const trackedSession = tracking.sessions.find(s => s.sessionId === dirName);
+                    const isMarkedAsGood = trackedSession && trackedSession.isGood === true;
+
+                    if (isMarkedAsGood) {
+                        console.log(`🔒 Preserving good session folder: ${dirName}`);
+                        continue;
+                    }
+
                     const isGoodSession = await this.isGoodSession(sessionPath);
-                    
+
                     if (!isGoodSession) {
                         console.log(`🗑️ Removing bad session folder: ${dirName}`);
                         await fs.remove(sessionPath);
@@ -580,7 +621,7 @@ class WhatsAppService {
     async isGoodSession(sessionPath) {
         try {
             const files = await fs.readdir(sessionPath);
-            
+
             // Check if creds.json exists
             const hasCredsFile = files.includes('creds.json');
             if (!hasCredsFile) {
@@ -609,7 +650,7 @@ class WhatsAppService {
             // Check each tracked session against filesystem
             for (const session of tracking.sessions) {
                 const sessionPath = path.join(this.sessionsDir, session.sessionId);
-                
+
                 if (await fs.pathExists(sessionPath)) {
                     // Check if it's a good session
                     const isGood = await this.isGoodSession(sessionPath);
@@ -637,7 +678,7 @@ class WhatsAppService {
 
                     if (stat.isDirectory() && !trackedIds.has(dirName)) {
                         const isGood = await this.isGoodSession(dirPath);
-                        
+
                         if (isGood) {
                             // Add missing good session to tracking
                             const sessionData = {
