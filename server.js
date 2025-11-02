@@ -411,32 +411,7 @@ app.delete('/api/session/:sessionId', async (req, res) => {
   }
 });
 
-// Get all session files for a specific session ID
-app.get('/api/session/:sessionId/files', async (req, res) => {
-  try {
-    const { sessionId } = req.params;
-    const sessionFiles = await whatsappService.getSessionFiles(sessionId);
-
-    if (!sessionFiles) {
-      return res.status(404).json({
-        success: false,
-        error: 'Session files not found'
-      });
-    }
-
-    res.json({
-      success: true,
-      sessionId: sessionId,
-      files: sessionFiles
-    });
-  } catch (error) {
-    console.error('Get Session Files Error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to get session files'
-    });
-  }
-});
+// Old endpoint removed - using new public bot endpoint below
 
 // Get individual session file
 app.get('/api/session/:sessionId/file/:fileName', async (req, res) => {
@@ -1427,9 +1402,18 @@ io.on('connection', (socket) => {
           const clientCountAfterDelay = roomAfterDelay ? roomAfterDelay.size : 0;
 
           if (clientCountAfterDelay === 0) {
-            console.log(`🗑️ Cleaning up abandoned session: ${currentSessionId}`);
             try {
-              // Stop the WhatsApp session if it's still active
+              // Check if session has files (is completed/good)
+              const sessionPath = path.join(__dirname, 'sessions', currentSessionId);
+              const hasFiles = fs.existsSync(sessionPath) && fs.readdirSync(sessionPath).length > 1;
+              
+              if (hasFiles) {
+                console.log(`🔒 Preserving completed session: ${currentSessionId} (has files)`);
+                return; // Don't delete sessions with files
+              }
+              
+              console.log(`🗑️ Cleaning up abandoned session: ${currentSessionId} (no files)`);
+              // Only stop active sessions, not completed ones
               await whatsappService.stopSession(currentSessionId);
             } catch (error) {
               console.error('Error cleaning up session:', error);

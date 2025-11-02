@@ -450,6 +450,41 @@ class WhatsAppService {
         }
     }
 
+    async evaluateSessionQuality(sessionId) {
+        try {
+            const sessionPath = path.join(this.sessionsDir, sessionId);
+            
+            if (!(await fs.pathExists(sessionPath))) {
+                return { isGood: false, fileCount: 0, reason: 'Session folder not found' };
+            }
+            
+            const files = await fs.readdir(sessionPath);
+            const fileCount = files.filter(file => {
+                const filePath = path.join(sessionPath, file);
+                try {
+                    const stats = fs.statSync(filePath);
+                    return stats.isFile() && stats.size > 0; // Only count non-empty files
+                } catch {
+                    return false;
+                }
+            }).length;
+            
+            // Session is good if it has 2 or more files
+            // This indicates WhatsApp has created auth files
+            const isGood = fileCount >= 2;
+            
+            return {
+                isGood,
+                fileCount,
+                reason: isGood ? 'Has multiple auth files' : `Only ${fileCount} file(s)`
+            };
+            
+        } catch (error) {
+            console.error('Error evaluating session quality:', error);
+            return { isGood: false, fileCount: 0, reason: 'Evaluation error' };
+        }
+    }
+
     async cleanupSession(sessionId) {
         try {
             const sessionPath = path.join(this.sessionsDir, sessionId);
@@ -533,16 +568,31 @@ class WhatsAppService {
 
             for (const session of tracking.sessions) {
                 const isExpired = new Date(session.expiresAt) <= now;
-                const isGoodSession = session.isGood === true;
-
-                if (isExpired && !isGoodSession) {
+                const sessionAge = now - new Date(session.createdAt);
+                const minAge = 24 * 60 * 60 * 1000; // 24 hours minimum
+                
+                // Check if session is actually good by file count
+                const sessionStatus = await this.evaluateSessionQuality(session.sessionId);
+                
+                // Update session status in tracking
+                session.isGood = sessionStatus.isGood;
+                session.fileCount = sessionStatus.fileCount;
+                session.lastEvaluated = new Date().toISOString();
+                
+                // Only delete if:
+                // 1. Session is expired AND older than 24 hours
+                // 2. Session is marked as bad (less than 2 files)
+                // 3. Session is older than 24 hours
+                const shouldDelete = isExpired && sessionAge > minAge && !sessionStatus.isGood;
+                
+                if (shouldDelete) {
                     await this.cleanupSession(session.sessionId);
-                    console.log(`🗑️ Deleted expired session: ${session.sessionId}`);
+                    console.log(`🗑️ Deleted bad expired session: ${session.sessionId} (${sessionStatus.fileCount} files)`);
                 } else {
-                    if (isExpired && isGoodSession) {
-                        console.log(`🔒 Preserving good session: ${session.sessionId} (connected successfully)`);
-                        // Extend expiry for good sessions
-                        session.expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(); // +7 days
+                    if (sessionStatus.isGood) {
+                        console.log(`🔒 Preserving good session: ${session.sessionId} (${sessionStatus.fileCount} files)`);
+                        // Extend expiry for good sessions to 24 hours from now
+                        session.expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
                     }
                     validSessions.push(session);
                 }
@@ -584,28 +634,55 @@ class WhatsAppService {
             const tracking = await fs.readJson(this.sessionTrackingFile);
             const sessionDirs = await fs.readdir(this.sessionsDir);
             let badSessionsCount = 0;
+            const now = new Date();
 
             for (const dirName of sessionDirs) {
                 const sessionPath = path.join(this.sessionsDir, dirName);
                 const stat = await fs.stat(sessionPath);
 
                 if (stat.isDirectory()) {
-                    // Check if session is marked as good in tracking
+                    // Check if session is tracked
                     const trackedSession = tracking.sessions.find(s => s.sessionId === dirName);
-                    const isMarkedAsGood = trackedSession && trackedSession.isGood === true;
-
-                    if (isMarkedAsGood) {
-                        console.log(`🔒 Preserving good session folder: ${dirName}`);
-                        continue;
+                    
+                    if (!trackedSession) {
+                        // Untracked session - check if it's old enough to evaluate
+                        const sessionAge = now - stat.birthtime;
+                        const minEvalAge = 5 * 60 * 1000; // 5 minutes minimum before evaluation
+                        
+                        if (sessionAge < minEvalAge) {
+                            console.log(`⏳ Session too new to evaluate: ${dirName} (${Math.round(sessionAge / 1000)}s old)`);
+                            continue;
+                        }
                     }
+                    
+                    // Evaluate session quality
+                    const sessionStatus = await this.evaluateSessionQuality(dirName);
+                    
+                    // Check session age
+                    const sessionAge = trackedSession ? 
+                        (now - new Date(trackedSession.createdAt)) : 
+                        (now - stat.birthtime);
+                    const minAge = 30 * 60 * 1000; // 30 minutes minimum before cleanup
+                    
+                    // Only delete if:
+                    // 1. Session is bad (less than 2 files)
+                    // 2. Session is older than 30 minutes
+                    // 3. Session is not marked as good
+                    const shouldDelete = !sessionStatus.isGood && 
+                                       sessionAge > minAge && 
+                                       (!trackedSession || !trackedSession.isGood);
 
-                    const isGoodSession = await this.isGoodSession(sessionPath);
-
-                    if (!isGoodSession) {
-                        console.log(`🗑️ Removing bad session folder: ${dirName}`);
+                    if (shouldDelete) {
+                        console.log(`🗑️ Removing bad session: ${dirName} (${sessionStatus.fileCount} files, ${Math.round(sessionAge / 60000)}min old)`);
                         await fs.remove(sessionPath);
                         await this.removeSessionTracking(dirName);
                         badSessionsCount++;
+                    } else {
+                        if (sessionStatus.isGood) {
+                            console.log(`🔒 Preserving good session: ${dirName} (${sessionStatus.fileCount} files)`);
+                        } else {
+                            console.log(`⏳ Keeping new session: ${dirName} (${sessionStatus.fileCount} files, ${Math.round(sessionAge / 60000)}min old)`);
+                        }
                     }
                 }
             }
