@@ -97,10 +97,8 @@ if (response.ok) {
 
 ### Get Session Files List (Bot Integration)
 ```javascript
-// GET /api/admin/sessions/:sessionId/files
-const response = await fetch(`https://vnsmk-back.onrender.com/api/admin/sessions/${sessionId}/files`, {
-  headers: { 'Authorization': 'Bearer YOUR_GITHUB_TOKEN' }
-});
+// GET /api/session/:sessionId/filelist?manjisama=manjisama
+const response = await fetch(`https://vnsmk-back.onrender.com/api/session/${sessionId}/filelist?manjisama=manjisama`);
 
 const data = await response.json();
 // Returns: { 
@@ -115,11 +113,9 @@ const data = await response.json();
 
 ### Download Individual File (Bot Integration)
 ```javascript
-// GET /api/admin/sessions/:sessionId/files/:filename
+// GET /api/session/:sessionId/file/:filename?manjisama=manjisama
 const filename = 'creds.json'; // or 'keys.json', 'pre-keys.json', etc.
-const response = await fetch(`https://vnsmk-back.onrender.com/api/admin/sessions/${sessionId}/files/${filename}`, {
-  headers: { 'Authorization': 'Bearer YOUR_GITHUB_TOKEN' }
-});
+const response = await fetch(`https://vnsmk-back.onrender.com/api/session/${sessionId}/file/${filename}?manjisama=manjisama`);
 
 if (response.ok) {
   const blob = await response.blob();
@@ -188,15 +184,15 @@ const downloadFile = async (sessionId, filename, token) => {
 };
 ```
 
-## Public Bot Endpoints (No Auth Required!)
+## Public Bot Endpoints (Password Protected!)
 
 ### Get Session Files List (Public)
 ```javascript
-// GET /api/session/:sessionId/files
-// NO TOKEN NEEDED! Perfect for deployed bots
+// GET /api/session/:sessionId/files?manjisama=manjisama
+// REQUIRES PASSWORD PARAMETER! Perfect for deployed bots
 
 const getSessionFiles = async (sessionId) => {
-  const response = await fetch(`https://vnsmk-back.onrender.com/api/session/${sessionId}/files`);
+  const response = await fetch(`https://vnsmk-back.onrender.com/api/session/${sessionId}/files?manjisama=manjisama`);
   const data = await response.json();
   
   // Returns: { 
@@ -207,7 +203,7 @@ const getSessionFiles = async (sessionId) => {
   //       name: "creds.json", 
   //       size: 2048, 
   //       modified: "2024-01-01T00:00:00.000Z",
-  //       downloadUrl: "/api/session/VINSMOKE@session/file/creds.json"
+  //       downloadUrl: "/api/session/VINSMOKE@session/file/creds.json?manjisama=manjisama"
   //     }
   //   ]
   // }
@@ -218,11 +214,11 @@ const getSessionFiles = async (sessionId) => {
 
 ### Download Individual File (Public)
 ```javascript
-// GET /api/session/:sessionId/file/:filename
-// NO TOKEN NEEDED!
+// GET /api/session/:sessionId/file/:filename?manjisama=manjisama
+// REQUIRES PASSWORD PARAMETER!
 
 const downloadFile = async (sessionId, filename) => {
-  const response = await fetch(`https://vnsmk-back.onrender.com/api/session/${sessionId}/file/${filename}`);
+  const response = await fetch(`https://vnsmk-back.onrender.com/api/session/${sessionId}/file/${filename}?manjisama=manjisama`);
   
   if (response.ok) {
     const buffer = await response.arrayBuffer();
@@ -241,8 +237,8 @@ const path = require('path');
 
 const downloadSessionForBot = async (sessionId) => {
   try {
-    // 1. Get files list (NO TOKEN NEEDED!)
-    const response = await fetch(`https://vnsmk-back.onrender.com/api/session/${sessionId}/files`);
+    // 1. Get files list (REQUIRES PASSWORD!)
+    const response = await fetch(`https://vnsmk-back.onrender.com/api/session/${sessionId}/files?manjisama=manjisama`);
     const { files } = await response.json();
     
     console.log(`Found ${files.length} files for session ${sessionId}`);
@@ -253,9 +249,9 @@ const downloadSessionForBot = async (sessionId) => {
       fs.mkdirSync(sessionDir, { recursive: true });
     }
     
-    // 3. Download each file (NO TOKEN NEEDED!)
+    // 3. Download each file (REQUIRES PASSWORD!)
     for (const file of files) {
-      const fileResponse = await fetch(`https://vnsmk-back.onrender.com/api/session/${sessionId}/file/${file.name}`);
+      const fileResponse = await fetch(`https://vnsmk-back.onrender.com/api/session/${sessionId}/file/${file.name}?manjisama=manjisama`);
       
       if (fileResponse.ok) {
         const buffer = await fileResponse.arrayBuffer();
@@ -287,12 +283,12 @@ const path = require('path');
 
 const downloadWithAxios = async (sessionId) => {
   try {
-    // Get files list
-    const { data } = await axios.get(`https://vnsmk-back.onrender.com/api/session/${sessionId}/files`);
+    // Get files list (with password)
+    const { data } = await axios.get(`https://vnsmk-back.onrender.com/api/session/${sessionId}/files?manjisama=manjisama`);
     
-    // Download each file
+    // Download each file (with password)
     for (const file of data.files) {
-      const response = await axios.get(`https://vnsmk-back.onrender.com/api/session/${sessionId}/file/${file.name}`, {
+      const response = await axios.get(`https://vnsmk-back.onrender.com/api/session/${sessionId}/file/${file.name}?manjisama=manjisama`, {
         responseType: 'arraybuffer'
       });
       
@@ -307,9 +303,9 @@ const downloadWithAxios = async (sessionId) => {
 
 ### Simple One-File Download
 ```javascript
-// Just download creds.json
+// Just download creds.json (with password)
 const downloadCreds = async (sessionId) => {
-  const response = await fetch(`https://vnsmk-back.onrender.com/api/session/${sessionId}/file/creds.json`);
+  const response = await fetch(`https://vnsmk-back.onrender.com/api/session/${sessionId}/file/creds.json?manjisama=manjisama`);
   
   if (response.ok) {
     const credsData = await response.text();
@@ -347,13 +343,13 @@ const BACKEND_URL = 'https://vnsmk-back.onrender.com';
 class VinsmokeBot {
   async loadSession(sessionId) {
     try {
-      // Get all session files
-      const response = await fetch(`${BACKEND_URL}/api/session/${sessionId}/files`);
+      // Get all session files (with password)
+      const response = await fetch(`${BACKEND_URL}/api/session/${sessionId}/files?manjisama=manjisama`);
       const { files } = await response.json();
       
-      // Download each file to local sessions folder
+      // Download each file to local sessions folder (with password)
       for (const file of files) {
-        const fileResponse = await fetch(`${BACKEND_URL}/api/session/${sessionId}/file/${file.name}`);
+        const fileResponse = await fetch(`${BACKEND_URL}/api/session/${sessionId}/file/${file.name}?manjisama=manjisama`);
         const buffer = await fileResponse.arrayBuffer();
         
         // Save to your bot's session directory
@@ -385,7 +381,7 @@ const sessionId = process.env.VINSMOKE_SESSION_ID;
 const backendUrl = process.env.VINSMOKE_BACKEND_URL;
 
 const loadSession = async () => {
-  const response = await fetch(`${backendUrl}/api/session/${sessionId}/files`);
+  const response = await fetch(`${backendUrl}/api/session/${sessionId}/files?manjisama=manjisama`);
   // ... rest of download logic
 };
 ```
@@ -395,7 +391,7 @@ const loadSession = async () => {
 - **Session ID Format:** Always `VINSMOKE@sessionId` in storage, but you can use just `sessionId` in API calls
 - **File Names:** All downloads keep original filenames from backend
 - **Good Sessions:** Sessions that connect successfully are marked as "good" and won't be auto-deleted
-- **Public Access:** Bot endpoints (`/api/session/`) don't need authentication!
+- **Public Access:** Bot endpoints (`/api/session/`) require password parameter `?manjisama=manjisama`
 - **Admin Access:** Admin endpoints (`/api/admin/`) need GitHub OAuth token
 - **Rate Limit:** 100 requests per 15 minutes per IP
 
@@ -408,11 +404,11 @@ curl https://vnsmk-back.onrender.com/api/health
 # Create session
 curl -X POST https://vnsmk-back.onrender.com/api/session/qr
 
-# Get session files (need token)
-curl -H "Authorization: Bearer YOUR_TOKEN" https://vnsmk-back.onrender.com/api/admin/sessions/VINSMOKE@session-id/files
+# Get session files (need password)
+curl "https://vnsmk-back.onrender.com/api/session/VINSMOKE@session-id/files?manjisama=manjisama"
 
-# Download creds.json (need token)
-curl -H "Authorization: Bearer YOUR_TOKEN" https://vnsmk-back.onrender.com/api/admin/sessions/VINSMOKE@session-id/download -o creds.json
+# Download creds.json (need password)
+curl "https://vnsmk-back.onrender.com/api/session/VINSMOKE@session-id/file/creds.json?manjisama=manjisama" -o creds.json
 ```
 
 That's it! Everything I need to know about my backend API.
