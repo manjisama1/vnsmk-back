@@ -77,6 +77,7 @@ class WhatsAppService {
         return sock;
     }
 
+    
     async generateQR(sessionId) {
         try {
             const maxSessions = parseInt(process.env.MAX_SESSIONS) || 100;

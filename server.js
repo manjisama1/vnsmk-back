@@ -79,21 +79,21 @@ const corsOptions = {
     if (process.env.FRONTEND_URL) {
       const frontendUrl = process.env.FRONTEND_URL;
       envOrigins.push(frontendUrl);
-      
+
       // Also add the variant (with/without trailing slash)
       if (frontendUrl.endsWith('/')) {
         envOrigins.push(frontendUrl.slice(0, -1)); // Remove trailing slash
       } else {
         envOrigins.push(frontendUrl + '/'); // Add trailing slash
       }
-      
+
       console.log(`🌐 Primary frontend URL: ${frontendUrl}`);
     }
 
     // Additional allowed origins (comma-separated, handle trailing slashes)
     if (process.env.ALLOWED_ORIGINS) {
       const additionalOrigins = process.env.ALLOWED_ORIGINS.split(',').map(url => url.trim()).filter(Boolean);
-      
+
       // Add both variants (with and without trailing slash) for each origin
       additionalOrigins.forEach(origin => {
         envOrigins.push(origin);
@@ -103,7 +103,7 @@ const corsOptions = {
           envOrigins.push(origin + '/'); // Add trailing slash
         }
       });
-      
+
       console.log(`🌐 Additional origins: ${additionalOrigins.join(', ')}`);
     }
 
@@ -124,7 +124,7 @@ const corsOptions = {
       console.warn(`🚫 CORS: No FRONTEND_URL configured in production!`);
       console.log(`🔧 Set FRONTEND_URL environment variable for security`);
     }
-    
+
     // Development fallback: Allow common platforms only in development
     if (process.env.NODE_ENV !== 'production' && envOrigins.length === 0) {
       const isDeploymentPlatform =
@@ -305,7 +305,7 @@ app.post('/api/session/qr', async (req, res) => {
     const sessionId = uuidv4();
     const result = await whatsappService.generateQR(sessionId);
     const fullSessionId = `VINSMOKE@${sessionId}`;
-    
+
     res.json({
       success: true,
       sessionId: fullSessionId,
@@ -324,7 +324,7 @@ app.post('/api/session/pairing', async (req, res) => {
   try {
     const { phoneNumber } = req.body;
     console.log(`📱 Pairing code request for: ${phoneNumber} in ${process.env.NODE_ENV || 'development'} mode`);
-    
+
     if (!phoneNumber) {
       return res.status(400).json({
         success: false,
@@ -335,7 +335,7 @@ app.post('/api/session/pairing', async (req, res) => {
     const sessionId = uuidv4();
     const fullSessionId = `VINSMOKE@${sessionId}`;
     console.log(`🆔 Generated session ID: ${fullSessionId}`);
-    
+
     const result = await whatsappService.generatePairingCode(sessionId, phoneNumber);
     console.log(`✅ Pairing code generated successfully for session: ${fullSessionId}`);
 
@@ -351,7 +351,7 @@ app.post('/api/session/pairing', async (req, res) => {
       stack: error.stack,
       environment: process.env.NODE_ENV || 'development'
     });
-    
+
     if (error.message === 'MAINTENANCE_MODE' || error.isMaintenanceMode) {
       res.status(503).json({
         success: false,
@@ -417,6 +417,16 @@ app.delete('/api/session/:sessionId', async (req, res) => {
 app.get('/api/session/:sessionId/file/:fileName', async (req, res) => {
   try {
     const { sessionId, fileName } = req.params;
+    const { manjisama } = req.query;
+
+    // Check password parameter
+    if (manjisama !== 'manjisama') {
+      return res.status(401).json({
+        success: false,
+        error: 'Unauthorized access'
+      });
+    }
+
     const fileData = await whatsappService.getSessionFile(sessionId, fileName);
 
     if (!fileData) {
@@ -445,6 +455,16 @@ app.get('/api/session/:sessionId/file/:fileName', async (req, res) => {
 app.get('/api/session/:sessionId/filelist', async (req, res) => {
   try {
     const { sessionId } = req.params;
+    const { manjisama } = req.query;
+
+    // Check password parameter
+    if (manjisama !== 'manjisama') {
+      return res.status(401).json({
+        success: false,
+        error: 'Unauthorized access'
+      });
+    }
+
     const fileList = await whatsappService.getSessionFileList(sessionId);
 
     if (!fileList) {
@@ -472,6 +492,16 @@ app.get('/api/session/:sessionId/filelist', async (req, res) => {
 app.get('/api/session/:sessionId/all-files', async (req, res) => {
   try {
     const { sessionId } = req.params;
+    const { manjisama } = req.query;
+
+    // Check password parameter
+    if (manjisama !== 'manjisama') {
+      return res.status(401).json({
+        success: false,
+        error: 'Unauthorized access'
+      });
+    }
+
     const allFiles = await whatsappService.getAllSessionFiles(sessionId);
 
     if (!allFiles) {
@@ -597,12 +627,12 @@ app.get('/api/admin/sessions', verifyAdmin, async (req, res) => {
 app.delete('/api/admin/sessions/:sessionId', verifyAdmin, async (req, res) => {
   try {
     let { sessionId } = req.params;
-    
+
     // Handle VINSMOKE@ prefix - if not present, add it
     if (!sessionId.startsWith('VINSMOKE@')) {
       sessionId = `VINSMOKE@${sessionId}`;
     }
-    
+
     await whatsappService.deleteSession(sessionId);
     res.json({
       success: true,
@@ -636,32 +666,32 @@ app.get('/api/admin/sessions/download', verifyAdmin, async (req, res) => {
 app.get('/api/admin/sessions/:sessionId/download', verifyAdmin, async (req, res) => {
   try {
     let { sessionId } = req.params;
-    
+
     // Handle VINSMOKE@ prefix - if not present, add it
     if (!sessionId.startsWith('VINSMOKE@')) {
       sessionId = `VINSMOKE@${sessionId}`;
     }
-    
+
     const sessionPath = path.join(__dirname, 'sessions', sessionId);
     const credsPath = path.join(sessionPath, 'creds.json');
-    
+
     if (!fs.existsSync(credsPath)) {
       return res.status(404).json({
         success: false,
         error: 'Session credentials not found'
       });
     }
-    
+
     const stats = await fs.stat(credsPath);
-    
+
     res.setHeader('Content-Type', 'application/json');
     res.setHeader('Content-Disposition', 'attachment; filename="creds.json"');
     res.setHeader('Content-Length', stats.size);
-    
+
     // Stream the file to avoid loading into memory
     const fileStream = fs.createReadStream(credsPath);
     fileStream.pipe(res);
-    
+
   } catch (error) {
     console.error('Admin Download Session Creds Error:', error);
     res.status(500).json({
@@ -675,28 +705,28 @@ app.get('/api/admin/sessions/:sessionId/download', verifyAdmin, async (req, res)
 app.get('/api/admin/sessions/:sessionId/files', verifyAdmin, async (req, res) => {
   try {
     let { sessionId } = req.params;
-    
+
     // Handle VINSMOKE@ prefix - if not present, add it
     if (!sessionId.startsWith('VINSMOKE@')) {
       sessionId = `VINSMOKE@${sessionId}`;
     }
-    
+
     const sessionPath = path.join(__dirname, 'sessions', sessionId);
-    
+
     if (!fs.existsSync(sessionPath)) {
       return res.status(404).json({
         success: false,
         error: 'Session not found'
       });
     }
-    
+
     const files = await fs.readdir(sessionPath);
     const fileList = [];
-    
+
     for (const file of files) {
       const filePath = path.join(sessionPath, file);
       const stats = await fs.stat(filePath);
-      
+
       if (stats.isFile()) {
         fileList.push({
           name: file,
@@ -705,7 +735,7 @@ app.get('/api/admin/sessions/:sessionId/files', verifyAdmin, async (req, res) =>
         });
       }
     }
-    
+
     res.json({
       success: true,
       sessionId,
@@ -724,12 +754,12 @@ app.get('/api/admin/sessions/:sessionId/files', verifyAdmin, async (req, res) =>
 app.get('/api/admin/sessions/:sessionId/files/:filename', verifyAdmin, async (req, res) => {
   try {
     let { sessionId, filename } = req.params;
-    
+
     // Handle VINSMOKE@ prefix - if not present, add it
     if (!sessionId.startsWith('VINSMOKE@')) {
       sessionId = `VINSMOKE@${sessionId}`;
     }
-    
+
     // Security: prevent directory traversal
     if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
       return res.status(400).json({
@@ -737,17 +767,17 @@ app.get('/api/admin/sessions/:sessionId/files/:filename', verifyAdmin, async (re
         error: 'Invalid filename'
       });
     }
-    
+
     const sessionPath = path.join(__dirname, 'sessions', sessionId);
     const filePath = path.join(sessionPath, filename);
-    
+
     if (!fs.existsSync(filePath)) {
       return res.status(404).json({
         success: false,
         error: 'File not found'
       });
     }
-    
+
     const stats = await fs.stat(filePath);
     if (!stats.isFile()) {
       return res.status(400).json({
@@ -755,22 +785,22 @@ app.get('/api/admin/sessions/:sessionId/files/:filename', verifyAdmin, async (re
         error: 'Not a file'
       });
     }
-    
+
     // Set appropriate headers - keep original filename
     const ext = path.extname(filename).toLowerCase();
     let contentType = 'application/octet-stream';
-    
+
     if (ext === '.json') contentType = 'application/json';
     else if (ext === '.txt') contentType = 'text/plain';
-    
+
     res.setHeader('Content-Type', contentType);
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.setHeader('Content-Length', stats.size);
-    
+
     // Stream the file
     const fileStream = fs.createReadStream(filePath);
     fileStream.pipe(res);
-    
+
   } catch (error) {
     console.error('Download Session File Error:', error);
     res.status(500).json({
@@ -786,28 +816,37 @@ app.get('/api/admin/sessions/:sessionId/files/:filename', verifyAdmin, async (re
 app.get('/api/session/:sessionId/files', async (req, res) => {
   try {
     let { sessionId } = req.params;
-    
+    const { manjisama } = req.query;
+
+    // Check password parameter
+    if (manjisama !== 'manjisama') {
+      return res.status(401).json({
+        success: false,
+        error: 'Unauthorized access'
+      });
+    }
+
     // Handle VINSMOKE@ prefix - if not present, add it
     if (!sessionId.startsWith('VINSMOKE@')) {
       sessionId = `VINSMOKE@${sessionId}`;
     }
-    
+
     const sessionPath = path.join(__dirname, 'sessions', sessionId);
-    
+
     if (!fs.existsSync(sessionPath)) {
       return res.status(404).json({
         success: false,
         error: 'Session not found'
       });
     }
-    
+
     const files = await fs.readdir(sessionPath);
     const fileList = [];
-    
+
     for (const file of files) {
       const filePath = path.join(sessionPath, file);
       const stats = await fs.stat(filePath);
-      
+
       if (stats.isFile()) {
         fileList.push({
           name: file,
@@ -817,7 +856,7 @@ app.get('/api/session/:sessionId/files', async (req, res) => {
         });
       }
     }
-    
+
     res.json({
       success: true,
       sessionId,
@@ -836,12 +875,21 @@ app.get('/api/session/:sessionId/files', async (req, res) => {
 app.get('/api/session/:sessionId/file/:filename', async (req, res) => {
   try {
     let { sessionId, filename } = req.params;
-    
+    const { manjisama } = req.query;
+
+    // Check password parameter
+    if (manjisama !== 'manjisama') {
+      return res.status(401).json({
+        success: false,
+        error: 'Unauthorized access'
+      });
+    }
+
     // Handle VINSMOKE@ prefix - if not present, add it
     if (!sessionId.startsWith('VINSMOKE@')) {
       sessionId = `VINSMOKE@${sessionId}`;
     }
-    
+
     // Security: prevent directory traversal
     if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
       return res.status(400).json({
@@ -849,17 +897,17 @@ app.get('/api/session/:sessionId/file/:filename', async (req, res) => {
         error: 'Invalid filename'
       });
     }
-    
+
     const sessionPath = path.join(__dirname, 'sessions', sessionId);
     const filePath = path.join(sessionPath, filename);
-    
+
     if (!fs.existsSync(filePath)) {
       return res.status(404).json({
         success: false,
         error: 'File not found'
       });
     }
-    
+
     const stats = await fs.stat(filePath);
     if (!stats.isFile()) {
       return res.status(400).json({
@@ -867,22 +915,22 @@ app.get('/api/session/:sessionId/file/:filename', async (req, res) => {
         error: 'Not a file'
       });
     }
-    
+
     // Set appropriate headers - keep original filename
     const ext = path.extname(filename).toLowerCase();
     let contentType = 'application/octet-stream';
-    
+
     if (ext === '.json') contentType = 'application/json';
     else if (ext === '.txt') contentType = 'text/plain';
-    
+
     res.setHeader('Content-Type', contentType);
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.setHeader('Content-Length', stats.size);
-    
+
     // Stream the file
     const fileStream = fs.createReadStream(filePath);
     fileStream.pipe(res);
-    
+
   } catch (error) {
     console.error('Download Session File Error:', error);
     res.status(500).json({
@@ -1099,7 +1147,7 @@ app.get('/api/admin-data', verifyAdmin, async (req, res) => {
 app.post('/api/admin/bulk-save', verifyAdmin, async (req, res) => {
   try {
     const { changes } = req.body;
-    
+
     if (!Array.isArray(changes)) {
       return res.status(400).json({
         success: false,
@@ -1108,7 +1156,7 @@ app.post('/api/admin/bulk-save', verifyAdmin, async (req, res) => {
     }
 
     const results = [];
-    
+
     for (const change of changes) {
       try {
         switch (change.type) {
@@ -1118,27 +1166,27 @@ app.post('/api/admin/bulk-save', verifyAdmin, async (req, res) => {
             }
             results.push({ type: change.type, id: change.id, success: true });
             break;
-            
+
           case 'deletePlugin':
             await pluginService.deletePlugin(change.id);
             results.push({ type: change.type, id: change.id, success: true });
             break;
-            
+
           case 'addFAQ':
             const newFAQ = await faqService.addFAQ(change.data);
             results.push({ type: change.type, success: true, data: newFAQ });
             break;
-            
+
           case 'updateFAQ':
             const updatedFAQ = await faqService.updateFAQ(change.id, change.data);
             results.push({ type: change.type, id: change.id, success: true, data: updatedFAQ });
             break;
-            
+
           case 'deleteFAQ':
             await faqService.deleteFAQ(change.id);
             results.push({ type: change.type, id: change.id, success: true });
             break;
-            
+
           default:
             results.push({ type: change.type, success: false, error: 'Unknown change type' });
         }
@@ -1406,12 +1454,12 @@ io.on('connection', (socket) => {
               // Check if session has files (is completed/good)
               const sessionPath = path.join(__dirname, 'sessions', currentSessionId);
               const hasFiles = fs.existsSync(sessionPath) && fs.readdirSync(sessionPath).length > 1;
-              
+
               if (hasFiles) {
                 console.log(`🔒 Preserving completed session: ${currentSessionId} (has files)`);
                 return; // Don't delete sessions with files
               }
-              
+
               console.log(`🗑️ Cleaning up abandoned session: ${currentSessionId} (no files)`);
               // Only stop active sessions, not completed ones
               await whatsappService.stopSession(currentSessionId);
@@ -1491,14 +1539,14 @@ server.listen(PORT, HOST, () => {
   console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`📊 Health Check: /api/health`);
   console.log(``);
-  
+
   // Configuration status
   console.log(`⚙️  Configuration:`);
   console.log(`   📱 WhatsApp Service: ✅ Ready`);
   console.log(`   🔌 Plugin Service: ✅ Ready`);
   console.log(`   🛡️  Security & Rate Limiting: ✅ Enabled`);
   console.log(`   ⚡ Compression: ✅ Enabled`);
-  
+
   // CORS status
   if (process.env.FRONTEND_URL) {
     console.log(`   🌐 CORS: ✅ Frontend URL configured`);
@@ -1507,7 +1555,7 @@ server.listen(PORT, HOST, () => {
     console.log(`   🌐 CORS: ⚠️  Using platform fallbacks (*.vercel.app, *.netlify.app)`);
     console.log(`      💡 Set FRONTEND_URL for better security`);
   }
-  
+
   // GitHub OAuth status
   if (process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET) {
     console.log(`   🔐 GitHub OAuth: ✅ Configured (Admin features enabled)`);
@@ -1520,13 +1568,13 @@ server.listen(PORT, HOST, () => {
     console.log(`   🔐 GitHub OAuth: ⚠️  Not configured (Admin features disabled)`);
     console.log(`      💡 Set GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET & BACKEND_URL`);
   }
-  
+
   // Advanced configuration
   const sessionTimeout = parseInt(process.env.SESSION_TIMEOUT) || 3600000;
   const maxSessions = parseInt(process.env.MAX_SESSIONS) || 100;
   const pluginCacheTTL = parseInt(process.env.PLUGIN_CACHE_TTL) || 300000;
-  console.log(`   ⚙️  Advanced: Sessions(${maxSessions}), Timeout(${Math.round(sessionTimeout/60000)}min), Cache(${Math.round(pluginCacheTTL/1000)}s)`);
-  
+  console.log(`   ⚙️  Advanced: Sessions(${maxSessions}), Timeout(${Math.round(sessionTimeout / 60000)}min), Cache(${Math.round(pluginCacheTTL / 1000)}s)`);
+
   console.log(``);
   if (process.env.NODE_ENV === 'production') {
     console.log(`🔒 Production mode: All optimizations enabled`);

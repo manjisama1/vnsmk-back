@@ -24,6 +24,7 @@ class FAQService {
       await this.initPromise;
     }
   }
+  
 
   async ensureDataDir() {
     const dataDir = path.dirname(this.faqFile);
