@@ -1,6 +1,21 @@
-const fs = require('fs-extra');
-const path = require('path');
-const { v4: uuidv4 } = require('uuid');
+import fs from 'fs-extra';
+import path from 'path';
+import { v4 as uuidv4 } from 'uuid';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Clean logging system with colors and timestamps
+const getTimestamp = () => new Date().toTimeString().split(' ')[0] + '.' + new Date().getMilliseconds().toString().padStart(3, '0');
+
+const log = {
+    info: (msg, data = '') => console.log(`\x1b[90m${getTimestamp()}\x1b[0m \x1b[36m[INFO]\x1b[0m ${msg}${data ? ` \x1b[90m${data}\x1b[0m` : ''}`),
+    success: (msg, data = '') => console.log(`\x1b[90m${getTimestamp()}\x1b[0m \x1b[32m[SUCCESS]\x1b[0m ${msg}${data ? ` \x1b[90m${data}\x1b[0m` : ''}`),
+    warn: (msg, data = '') => console.log(`\x1b[90m${getTimestamp()}\x1b[0m \x1b[33m[WARN]\x1b[0m ${msg}${data ? ` \x1b[90m${data}\x1b[0m` : ''}`),
+    error: (msg, data = '') => console.log(`\x1b[90m${getTimestamp()}\x1b[0m \x1b[31m[ERROR]\x1b[0m ${msg}${data ? ` \x1b[90m${data}\x1b[0m` : ''}`),
+    debug: (msg, data = '') => console.log(`\x1b[90m${getTimestamp()}\x1b[0m \x1b[35m[DEBUG]\x1b[0m ${msg}${data ? ` \x1b[90m${data}\x1b[0m` : ''}`)
+};
 
 class PluginService {
   constructor() {
@@ -17,9 +32,9 @@ class PluginService {
     try {
       await this.ensureDataDir();
       this.initialized = true;
-      console.log('📦 Plugin Service: Production ready');
+      log.success('Plugin Service ready');
     } catch (error) {
-      console.error('❌ Plugin Service initialization error:', error);
+      log.error('Plugin Service init failed:', error.message);
     }
   }
 
@@ -34,7 +49,6 @@ class PluginService {
     await fs.ensureDir(dataDir);
 
     if (!(await fs.pathExists(this.pluginsFile))) {
-      console.log('📦 Creating plugins.json file...');
       await fs.writeJson(this.pluginsFile, []);
     }
   }
@@ -135,10 +149,10 @@ class PluginService {
         ];
 
         await fs.writeJson(this.pluginsFile, demoPlugins);
-        console.log('Demo plugins loaded successfully');
+        log.debug('Demo plugins loaded');
       }
     } catch (error) {
-      console.error('Error loading demo plugins:', error);
+      log.error('Error loading demo plugins:', error.message);
     }
   }
 
@@ -163,7 +177,7 @@ class PluginService {
       
       return plugins;
     } catch (error) {
-      console.error('Error reading plugins file:', error);
+      log.error('Error reading plugins:', error.message);
       return [];
     }
   }
@@ -216,7 +230,7 @@ class PluginService {
 
       return plugins;
     } catch (error) {
-      console.error('Error getting plugins:', error);
+      log.error('Error getting plugins:', error.message);
       throw error;
     }
   }
@@ -236,10 +250,10 @@ class PluginService {
       plugins.push(newPlugin);
       await fs.writeJson(this.pluginsFile, plugins);
 
-      console.log('Plugin added:', newPlugin.name);
+      log.debug('Plugin added:', newPlugin.name);
       return newPlugin;
     } catch (error) {
-      console.error('Error adding plugin:', error);
+      log.error('Error adding plugin:', error.message);
       throw error;
     }
   }
@@ -258,10 +272,10 @@ class PluginService {
 
       await fs.writeJson(this.pluginsFile, plugins);
 
-      console.log(`Plugin ${status}:`, plugins[pluginIndex].name);
+      log.debug(`Plugin ${status}:`, plugins[pluginIndex].name);
       return plugins[pluginIndex];
     } catch (error) {
-      console.error('Error updating plugin status:', error);
+      log.error('Error updating plugin status:', error.message);
       throw error;
     }
   }
@@ -296,7 +310,7 @@ class PluginService {
       await fs.writeJson(this.pluginsFile, plugins, { spaces: 2 });
       return plugins[pluginIndex];
     } catch (error) {
-      console.error('Error liking plugin:', error);
+      log.error('Error liking plugin:', error.message);
       throw error;
     }
   }
@@ -311,11 +325,11 @@ class PluginService {
       }
 
       await fs.writeJson(this.pluginsFile, filteredPlugins);
-      console.log('Plugin deleted:', pluginId);
+      log.debug('Plugin deleted:', pluginId);
 
       return true;
     } catch (error) {
-      console.error('Error deleting plugin:', error);
+      log.error('Error deleting plugin:', error.message);
       throw error;
     }
   }
@@ -337,13 +351,13 @@ class PluginService {
 
       await fs.writeJson(this.pluginsFile, plugins);
 
-      console.log('Plugin updated:', plugins[pluginIndex].name);
+      log.debug('Plugin updated:', plugins[pluginIndex].name);
       return plugins[pluginIndex];
     } catch (error) {
-      console.error('Error updating plugin:', error);
+      log.error('Error updating plugin:', error.message);
       throw error;
     }
   }
 }
 
-module.exports = PluginService;
+export default PluginService;

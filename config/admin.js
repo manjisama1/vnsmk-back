@@ -44,7 +44,7 @@ const isAdmin = (user) => {
   return false;
 };
 
-module.exports = {
+export {
   ADMIN_CONFIG,
   isAdmin
 };

@@ -1,16 +1,34 @@
-const express = require('express');
-const cors = require('cors');
-const http = require('http');
-const socketIo = require('socket.io');
-const fs = require('fs-extra');
-const path = require('path');
-const { v4: uuidv4 } = require('uuid');
-require('dotenv').config();
+import express from 'express';
+import cors from 'cors';
+import http from 'http';
+import { Server as SocketIOServer } from 'socket.io';
+import fs from 'fs-extra';
+import path from 'path';
+import { v4 as uuidv4 } from 'uuid';
+import { config } from 'dotenv';
+import { fileURLToPath } from 'url';
 
-const WhatsAppService = require('./services/whatsappService');
-const PluginService = require('./services/pluginService');
-const FAQService = require('./services/faqService');
-const { isAdmin } = require('./config/admin');
+// ES module compatibility
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+config();
+
+import WhatsAppService from './services/whatsappService.js';
+import PluginService from './services/pluginService.js';
+import FAQService from './services/faqService.js';
+import { isAdmin } from './config/admin.js';
+
+// Clean logging system with colors and timestamps
+const getTimestamp = () => new Date().toTimeString().split(' ')[0] + '.' + new Date().getMilliseconds().toString().padStart(3, '0');
+
+const log = {
+    info: (msg, data = '') => console.log(`\x1b[90m${getTimestamp()}\x1b[0m \x1b[36m[INFO]\x1b[0m ${msg}${data ? ` \x1b[90m${data}\x1b[0m` : ''}`),
+    success: (msg, data = '') => console.log(`\x1b[90m${getTimestamp()}\x1b[0m \x1b[32m[SUCCESS]\x1b[0m ${msg}${data ? ` \x1b[90m${data}\x1b[0m` : ''}`),
+    warn: (msg, data = '') => console.log(`\x1b[90m${getTimestamp()}\x1b[0m \x1b[33m[WARN]\x1b[0m ${msg}${data ? ` \x1b[90m${data}\x1b[0m` : ''}`),
+    error: (msg, data = '') => console.log(`\x1b[90m${getTimestamp()}\x1b[0m \x1b[31m[ERROR]\x1b[0m ${msg}${data ? ` \x1b[90m${data}\x1b[0m` : ''}`),
+    debug: (msg, data = '') => console.log(`\x1b[90m${getTimestamp()}\x1b[0m \x1b[35m[DEBUG]\x1b[0m ${msg}${data ? ` \x1b[90m${data}\x1b[0m` : ''}`)
+};
 
 const app = express();
 
@@ -18,9 +36,9 @@ const app = express();
 app.set('trust proxy', 1);
 
 // Security middleware
-const helmet = require('helmet');
-const compression = require('compression');
-const rateLimit = require('express-rate-limit');
+import helmet from 'helmet';
+import compression from 'compression';
+import rateLimit from 'express-rate-limit';
 
 // Apply security headers
 app.use(helmet({
@@ -46,7 +64,7 @@ const limiter = rateLimit({
 app.use('/api/', limiter);
 
 const server = http.createServer(app);
-const io = socketIo(server, {
+const io = new SocketIOServer(server, {
   cors: {
     origin: function (origin, callback) {
       // Use the same CORS logic as Express
@@ -86,8 +104,6 @@ const corsOptions = {
       } else {
         envOrigins.push(frontendUrl + '/'); // Add trailing slash
       }
-
-      console.log(`🌐 Primary frontend URL: ${frontendUrl}`);
     }
 
     // Additional allowed origins (comma-separated, handle trailing slashes)
@@ -103,8 +119,6 @@ const corsOptions = {
           envOrigins.push(origin + '/'); // Add trailing slash
         }
       });
-
-      console.log(`🌐 Additional origins: ${additionalOrigins.join(', ')}`);
     }
 
     // Combine all explicitly allowed origins
@@ -114,15 +128,14 @@ const corsOptions = {
 
     // Check explicit origins first (highest priority)
     if (explicitOrigins.includes(origin)) {
-      console.log(`✅ CORS allowed (explicit): ${origin}`);
       return callback(null, true);
     }
 
     // Production: Only allow explicitly configured origins (no platform fallbacks)
     // This ensures ONLY your frontend can access the API
     if (process.env.NODE_ENV === 'production' && envOrigins.length === 0) {
-      console.warn(`🚫 CORS: No FRONTEND_URL configured in production!`);
-      console.log(`🔧 Set FRONTEND_URL environment variable for security`);
+      log.warn(`CORS: No FRONTEND_URL configured in production!`);
+      log.info(`Set FRONTEND_URL environment variable for security`);
     }
 
     // Development fallback: Allow common platforms only in development
@@ -133,24 +146,11 @@ const corsOptions = {
         origin.endsWith('.github.io');
 
       if (isDeploymentPlatform) {
-        console.log(`✅ CORS allowed (dev platform): ${origin}`);
         return callback(null, true);
       }
     }
 
     // Block all other origins
-    console.warn(`🚫 CORS blocked origin: ${origin}`);
-    console.log(`🔧 To allow this origin, set environment variables:`);
-    console.log(`   FRONTEND_URL=${origin}`);
-    console.log(`   or add to ALLOWED_ORIGINS=${origin}`);
-    console.log(`✅ Currently allowed origins:`);
-    explicitOrigins.forEach(allowedOrigin => {
-      console.log(`   - ${allowedOrigin}`);
-    });
-    if (explicitOrigins.length === 0) {
-      console.log(`   - None (using platform fallbacks in development)`);
-    }
-
     callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
@@ -184,18 +184,18 @@ const faqService = new FAQService();
 
 // Initialize all services
 async function initializeServices() {
-  console.log('🔄 Initializing services...');
+  log.info('Initializing...');
   await Promise.all([
     whatsappService.initPromise,
     pluginService.initPromise,
     faqService.initPromise
   ]);
-  console.log('✅ All services initialized');
+  log.success('Services ready');
 }
 
 // Initialize services (don't wait, let them initialize in background)
 initializeServices().catch(error => {
-  console.error('❌ Service initialization failed:', error);
+  log.error('Init failed:', error.message);
 });
 
 // GitHub OAuth Routes
@@ -306,13 +306,15 @@ app.post('/api/session/qr', async (req, res) => {
     const result = await whatsappService.generateQR(sessionId);
     const fullSessionId = `VINSMOKE@${sessionId}`;
 
+    log.success(`QR: ${fullSessionId}`);
+
     res.json({
       success: true,
       sessionId: fullSessionId,
       qrCode: result.qrCode
     });
   } catch (error) {
-    console.error('QR Generation Error:', error);
+    log.error('QR error:', error.message);
     res.status(500).json({
       success: false,
       error: 'Failed to generate QR code'
@@ -323,7 +325,7 @@ app.post('/api/session/qr', async (req, res) => {
 app.post('/api/session/pairing', async (req, res) => {
   try {
     const { phoneNumber } = req.body;
-    console.log(`📱 Pairing code request for: ${phoneNumber} in ${process.env.NODE_ENV || 'development'} mode`);
+    log.info(`Pairing: ${phoneNumber}`);
 
     if (!phoneNumber) {
       return res.status(400).json({
@@ -334,10 +336,9 @@ app.post('/api/session/pairing', async (req, res) => {
 
     const sessionId = uuidv4();
     const fullSessionId = `VINSMOKE@${sessionId}`;
-    console.log(`🆔 Generated session ID: ${fullSessionId}`);
 
     const result = await whatsappService.generatePairingCode(sessionId, phoneNumber);
-    console.log(`✅ Pairing code generated successfully for session: ${fullSessionId}`);
+    log.success(`Pairing: ${fullSessionId}`);
 
     res.json({
       success: true,
@@ -346,11 +347,7 @@ app.post('/api/session/pairing', async (req, res) => {
       environment: process.env.NODE_ENV || 'development'
     });
   } catch (error) {
-    console.error('❌ Pairing Code Generation Error:', {
-      message: error.message,
-      stack: error.stack,
-      environment: process.env.NODE_ENV || 'development'
-    });
+    log.error('Pairing error:', error.message);
 
     if (error.message === 'MAINTENANCE_MODE' || error.isMaintenanceMode) {
       res.status(503).json({
@@ -1420,54 +1417,36 @@ app.post('/api/plugins/:id/like', async (req, res) => {
 
 // Socket.IO connection handling
 io.on('connection', (socket) => {
-  console.log('Client connected:', socket.id);
-
-  // Track which session this client is connected to
   let currentSessionId = null;
 
   socket.on('join-session', (sessionId) => {
     socket.join(sessionId);
     currentSessionId = sessionId;
-    console.log(`Client ${socket.id} joined session ${sessionId}`);
   });
 
   socket.on('disconnect', () => {
-    console.log('Client disconnected:', socket.id);
-
-    // If client was connected to a session, check if we should clean it up
     if (currentSessionId) {
-      // Check if there are any other clients in this session room
       const room = io.sockets.adapter.rooms.get(currentSessionId);
       const clientCount = room ? room.size : 0;
 
       if (clientCount === 0) {
-        // No more clients connected to this session, schedule cleanup
-        console.log(`🧹 No clients left for session ${currentSessionId}, scheduling cleanup...`);
-
-        // Give a grace period before cleanup in case client reconnects quickly
         setTimeout(async () => {
           const roomAfterDelay = io.sockets.adapter.rooms.get(currentSessionId);
           const clientCountAfterDelay = roomAfterDelay ? roomAfterDelay.size : 0;
 
           if (clientCountAfterDelay === 0) {
             try {
-              // Check if session has files (is completed/good)
               const sessionPath = path.join(__dirname, 'sessions', currentSessionId);
               const hasFiles = fs.existsSync(sessionPath) && fs.readdirSync(sessionPath).length > 1;
 
-              if (hasFiles) {
-                console.log(`🔒 Preserving completed session: ${currentSessionId} (has files)`);
-                return; // Don't delete sessions with files
+              if (!hasFiles) {
+                await whatsappService.stopSession(currentSessionId);
               }
-
-              console.log(`🗑️ Cleaning up abandoned session: ${currentSessionId} (no files)`);
-              // Only stop active sessions, not completed ones
-              await whatsappService.stopSession(currentSessionId);
             } catch (error) {
-              console.error('Error cleaning up session:', error);
+              log.error('Session cleanup error:', error.message);
             }
           }
-        }, 30000); // 30 second grace period
+        }, 30000);
       }
     }
   });
@@ -1475,7 +1454,7 @@ io.on('connection', (socket) => {
 
 // Error handling middleware
 app.use((error, req, res, next) => {
-  console.error('Unhandled Error:', error);
+  log.error('Unhandled Error:', error.message);
   res.status(500).json({
     success: false,
     error: 'Internal server error'
@@ -1517,68 +1496,41 @@ const HOST = process.env.HOST || '0.0.0.0';
 
 // Graceful shutdown handling
 process.on('SIGTERM', () => {
-  console.log('🛑 SIGTERM received, shutting down gracefully...');
+  log.warn('SIGTERM: Shutting down...');
   server.close(() => {
-    console.log('✅ Process terminated');
+    log.success('Terminated');
     process.exit(0);
   });
 });
 
 process.on('SIGINT', () => {
-  console.log('🛑 SIGINT received, shutting down gracefully...');
+  log.warn('SIGINT: Shutting down...');
   server.close(() => {
-    console.log('✅ Process terminated');
+    log.success('Terminated');
     process.exit(0);
   });
 });
 
 // Start server
 server.listen(PORT, HOST, () => {
-  console.log(`🚀 Vinsmoke Bot Backend v1.0.0`);
-  console.log(`🌐 Server running on ${HOST}:${PORT}`);
-  console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`📊 Health Check: /api/health`);
-  console.log(``);
+  log.success(`Vinsmoke Bot Backend v1.0.0`);
+  log.info(`Server: ${HOST}:${PORT}`);
+  log.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
 
   // Configuration status
-  console.log(`⚙️  Configuration:`);
-  console.log(`   📱 WhatsApp Service: ✅ Ready`);
-  console.log(`   🔌 Plugin Service: ✅ Ready`);
-  console.log(`   🛡️  Security & Rate Limiting: ✅ Enabled`);
-  console.log(`   ⚡ Compression: ✅ Enabled`);
+  log.success(`Services: Ready`);
 
   // CORS status
   if (process.env.FRONTEND_URL) {
-    console.log(`   🌐 CORS: ✅ Frontend URL configured`);
-    console.log(`      Frontend: ${process.env.FRONTEND_URL}`);
+    log.success(`CORS: Configured`);
   } else {
-    console.log(`   🌐 CORS: ⚠️  Using platform fallbacks (*.vercel.app, *.netlify.app)`);
-    console.log(`      💡 Set FRONTEND_URL for better security`);
+    log.warn(`CORS: Platform fallbacks`);
   }
 
   // GitHub OAuth status
   if (process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET) {
-    console.log(`   🔐 GitHub OAuth: ✅ Configured (Admin features enabled)`);
-    if (process.env.BACKEND_URL) {
-      console.log(`      Redirect URI: ${process.env.BACKEND_URL}/auth/callback`);
-    } else {
-      console.log(`      ⚠️  BACKEND_URL not set - using auto-detection`);
-    }
+    log.success(`OAuth: Enabled`);
   } else {
-    console.log(`   🔐 GitHub OAuth: ⚠️  Not configured (Admin features disabled)`);
-    console.log(`      💡 Set GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET & BACKEND_URL`);
-  }
-
-  // Advanced configuration
-  const sessionTimeout = parseInt(process.env.SESSION_TIMEOUT) || 3600000;
-  const maxSessions = parseInt(process.env.MAX_SESSIONS) || 100;
-  const pluginCacheTTL = parseInt(process.env.PLUGIN_CACHE_TTL) || 300000;
-  console.log(`   ⚙️  Advanced: Sessions(${maxSessions}), Timeout(${Math.round(sessionTimeout / 60000)}min), Cache(${Math.round(pluginCacheTTL / 1000)}s)`);
-
-  console.log(``);
-  if (process.env.NODE_ENV === 'production') {
-    console.log(`🔒 Production mode: All optimizations enabled`);
-  } else {
-    console.log(`🔧 Development mode: Debug logging enabled`);
+    log.warn(`OAuth: Disabled`);
   }
 });
