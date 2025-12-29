@@ -138,10 +138,6 @@ const corsOptions = {
       return callback(null, true);
     }
 
-    // Log the rejection for debugging
-    console.log(`🚫 CORS blocked origin: ${origin}`);
-    console.log(`✅ Allowed origins:`, explicitOrigins);
-
     // Block all other origins
     callback(new Error('Not allowed by CORS'));
   },
@@ -385,7 +381,7 @@ app.get('/api/session/:sessionId', async (req, res) => {
 app.delete('/api/session/:sessionId', async (req, res) => {
   try {
     const { sessionId } = req.params;
-    await whatsappService.deleteSession(sessionId);
+    await whatsappService.stopSession(sessionId);
 
     res.json({
       success: true,
@@ -544,13 +540,7 @@ app.get('/api/session/:sessionId/download-all', async (req, res) => {
 const verifyAdmin = (req, res, next) => {
   const authHeader = req.headers.authorization;
 
-  console.log('🔍 Admin verification attempt:', {
-    hasAuthHeader: !!authHeader,
-    authHeaderStart: authHeader ? authHeader.substring(0, 20) + '...' : 'none'
-  });
-
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    console.log('❌ Missing or invalid auth header');
     return res.status(401).json({
       success: false,
       error: 'Admin authentication required'
@@ -562,26 +552,17 @@ const verifyAdmin = (req, res, next) => {
     const token = authHeader.substring(7); // Remove 'Bearer ' prefix
     const userData = JSON.parse(Buffer.from(token, 'base64').toString());
 
-    console.log('🔍 Decoded user data:', {
-      id: userData.id,
-      login: userData.login,
-      name: userData.name
-    });
-
     // Check if user is admin
     if (!isAdmin(userData)) {
-      console.log('❌ Admin check failed for user:', userData.login);
       return res.status(403).json({
         success: false,
         error: 'Admin privileges required'
       });
     }
 
-    console.log('✅ Admin verification successful for:', userData.login);
     req.adminUser = userData;
     next();
   } catch (error) {
-    console.log('❌ Token decode error:', error.message);
     return res.status(401).json({
       success: false,
       error: 'Invalid admin token'
@@ -632,12 +613,15 @@ app.delete('/api/admin/sessions/:sessionId', verifyAdmin, async (req, res) => {
   try {
     let { sessionId } = req.params;
 
+    // Decode URL-encoded session ID
+    sessionId = decodeURIComponent(sessionId);
+
     // Handle VINSMOKE@ prefix - if not present, add it
     if (!sessionId.startsWith('VINSMOKE@')) {
       sessionId = `VINSMOKE@${sessionId}`;
     }
 
-    await whatsappService.deleteSession(sessionId);
+    await whatsappService.stopSession(sessionId);
     res.json({
       success: true,
       message: 'Session deleted successfully'
@@ -670,6 +654,9 @@ app.get('/api/admin/sessions/download', verifyAdmin, async (req, res) => {
 app.get('/api/admin/sessions/:sessionId/download', verifyAdmin, async (req, res) => {
   try {
     let { sessionId } = req.params;
+
+    // Decode URL-encoded session ID
+    sessionId = decodeURIComponent(sessionId);
 
     // Handle VINSMOKE@ prefix - if not present, add it
     if (!sessionId.startsWith('VINSMOKE@')) {
@@ -709,6 +696,9 @@ app.get('/api/admin/sessions/:sessionId/download', verifyAdmin, async (req, res)
 app.get('/api/admin/sessions/:sessionId/files', verifyAdmin, async (req, res) => {
   try {
     let { sessionId } = req.params;
+
+    // Decode URL-encoded session ID
+    sessionId = decodeURIComponent(sessionId);
 
     // Handle VINSMOKE@ prefix - if not present, add it
     if (!sessionId.startsWith('VINSMOKE@')) {

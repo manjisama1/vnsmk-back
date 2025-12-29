@@ -460,7 +460,7 @@ class WhatsAppService {
             const sessionData = {
                 sessionId,
                 createdAt: new Date().toISOString(),
-                expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(), // 1 year expiry for permanent sessions
+                expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 days expiry
                 isPermanent: true // Mark as permanent to prevent deletion
             };
 
