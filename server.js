@@ -107,6 +107,12 @@ const corsOptions = {
       }
     }
 
+    // Hardcoded production URL as fallback (your specific domain)
+    const productionOrigins = [
+      'https://vinsmoke-ten.vercel.app',
+      'https://vinsmoke-ten.vercel.app/'
+    ];
+
     // Additional allowed origins (comma-separated, handle trailing slashes)
     if (process.env.ALLOWED_ORIGINS) {
       const additionalOrigins = process.env.ALLOWED_ORIGINS.split(',').map(url => url.trim()).filter(Boolean);
@@ -124,32 +130,17 @@ const corsOptions = {
 
     // Combine all explicitly allowed origins
     const explicitOrigins = process.env.NODE_ENV === 'production'
-      ? [...envOrigins] // Production: Only use environment variables
-      : [...devOrigins, ...envOrigins]; // Development: Include localhost + env vars
+      ? [...envOrigins, ...productionOrigins] // Production: Use env vars + hardcoded fallback
+      : [...devOrigins, ...envOrigins, ...productionOrigins]; // Development: Include all
 
     // Check explicit origins first (highest priority)
     if (explicitOrigins.includes(origin)) {
       return callback(null, true);
     }
 
-    // Production: Only allow explicitly configured origins (no platform fallbacks)
-    // This ensures ONLY your frontend can access the API
-    if (process.env.NODE_ENV === 'production' && envOrigins.length === 0) {
-      log.warn(`CORS: No FRONTEND_URL configured in production!`);
-      log.info(`Set FRONTEND_URL environment variable for security`);
-    }
-
-    // Development fallback: Allow common platforms only in development
-    if (process.env.NODE_ENV !== 'production' && envOrigins.length === 0) {
-      const isDeploymentPlatform =
-        origin.endsWith('.vercel.app') ||
-        origin.endsWith('.netlify.app') ||
-        origin.endsWith('.github.io');
-
-      if (isDeploymentPlatform) {
-        return callback(null, true);
-      }
-    }
+    // Log the rejection for debugging
+    console.log(`🚫 CORS blocked origin: ${origin}`);
+    console.log(`✅ Allowed origins:`, explicitOrigins);
 
     // Block all other origins
     callback(new Error('Not allowed by CORS'));
@@ -553,7 +544,13 @@ app.get('/api/session/:sessionId/download-all', async (req, res) => {
 const verifyAdmin = (req, res, next) => {
   const authHeader = req.headers.authorization;
 
+  console.log('🔍 Admin verification attempt:', {
+    hasAuthHeader: !!authHeader,
+    authHeaderStart: authHeader ? authHeader.substring(0, 20) + '...' : 'none'
+  });
+
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    console.log('❌ Missing or invalid auth header');
     return res.status(401).json({
       success: false,
       error: 'Admin authentication required'
@@ -565,17 +562,26 @@ const verifyAdmin = (req, res, next) => {
     const token = authHeader.substring(7); // Remove 'Bearer ' prefix
     const userData = JSON.parse(Buffer.from(token, 'base64').toString());
 
+    console.log('🔍 Decoded user data:', {
+      id: userData.id,
+      login: userData.login,
+      name: userData.name
+    });
+
     // Check if user is admin
     if (!isAdmin(userData)) {
+      console.log('❌ Admin check failed for user:', userData.login);
       return res.status(403).json({
         success: false,
         error: 'Admin privileges required'
       });
     }
 
+    console.log('✅ Admin verification successful for:', userData.login);
     req.adminUser = userData;
     next();
   } catch (error) {
+    console.log('❌ Token decode error:', error.message);
     return res.status(401).json({
       success: false,
       error: 'Invalid admin token'
