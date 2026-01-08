@@ -1377,9 +1377,14 @@ app.post('/api/plugins', async (req, res) => {
       });
     }
 
-    // Validate gist URL format
-    const gistUrlPattern = /^https:\/\/gist\.github\.com\/[^\/]+\/[a-f0-9]+$/;
-    if (!gistUrlPattern.test(gistLink)) {
+    // Validate gist URL format - more flexible validation
+    const gistUrlPattern = /^https:\/\/gist\.github\.com\/[^\/]+\/[a-f0-9]{32}$/;
+    const rawGistPattern = /^https:\/\/gist\.githubusercontent\.com\/[^\/]+\/[a-f0-9]{32}\/raw/;
+    const simpleGistPattern = /^https:\/\/gist\.github\.com\/[^\/]+\/[a-f0-9]+/;
+    
+    if (!gistUrlPattern.test(gistLink) && 
+        !rawGistPattern.test(gistLink) && 
+        !simpleGistPattern.test(gistLink)) {
       return res.status(400).json({
         success: false,
         error: 'Invalid GitHub Gist URL format'
