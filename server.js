@@ -974,16 +974,26 @@ app.put('/api/admin/plugins/:id/status', verifyAdmin, async (req, res) => {
 app.delete('/api/admin/plugins/:id', verifyAdmin, async (req, res) => {
   try {
     const { id } = req.params;
-    await pluginService.deletePluginRequest(id);
-    res.json({
-      success: true,
-      message: 'Plugin request deleted successfully'
-    });
+    
+    const result = await pluginService.deletePluginCompletely(id);
+    
+    if (result.deletedFromRequests || result.deletedFromApproved) {
+      res.json({
+        success: true,
+        message: 'Plugin deleted successfully',
+        ...result
+      });
+    } else {
+      res.status(404).json({
+        success: false,
+        error: 'Plugin not found in either requests or approved plugins'
+      });
+    }
   } catch (error) {
-    console.error('Admin Delete Plugin Request Error:', error);
+    console.error('Admin Delete Plugin Error:', error);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to delete plugin request'
+      error: error.message || 'Failed to delete plugin'
     });
   }
 });

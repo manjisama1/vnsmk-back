@@ -503,6 +503,7 @@ export default PluginService;
       likes: 0,
       status: 'approved',
       submittedBy: request.submittedBy,
+      originalRequestId: id, // Store reference to original request
       approvedBy: adminUser,
       approvedAt: new Date().toISOString()
     };
@@ -511,4 +512,89 @@ export default PluginService;
     
     log.success(`Plugin approved and added: ${plugin.name}`);
     return { request, plugin };
+  }
+  // Find approved plugin by various criteria
+  async findApprovedPlugin(criteria) {
+    const plugins = await this.getAllPlugins();
+    
+    if (criteria.id) {
+      return plugins.find(plugin => plugin.id === criteria.id);
+    }
+    
+    if (criteria.originalRequestId) {
+      return plugins.find(plugin => plugin.originalRequestId === criteria.originalRequestId);
+    }
+    
+    if (criteria.name && criteria.author) {
+      return plugins.find(plugin => 
+        plugin.name === criteria.name && plugin.author === criteria.author
+      );
+    }
+    
+    if (criteria.submittedBy) {
+      return plugins.find(plugin => plugin.submittedBy === criteria.submittedBy);
+    }
+    
+    return null;
+  }
+
+  // Delete plugin from both requests and approved lists
+  async deletePluginCompletely(id) {
+    let deletedFromRequests = false;
+    let deletedFromApproved = false;
+    let approvedPlugin = null;
+
+    // Try to get the plugin request first
+    try {
+      const request = await this.getPluginRequestById(id);
+      if (request) {
+        // Look for approved plugin by original request ID (most reliable)
+        approvedPlugin = await this.findApprovedPlugin({
+          originalRequestId: id
+        });
+        
+        // Fallback: look by name/author if originalRequestId not found
+        if (!approvedPlugin) {
+          approvedPlugin = await this.findApprovedPlugin({
+            name: request.name,
+            author: request.author
+          });
+        }
+      }
+    } catch (error) {
+      // Request might not exist, try to find approved plugin by ID directly
+      try {
+        approvedPlugin = await this.findApprovedPlugin({ id });
+      } catch (e) {
+        // Plugin might not exist
+      }
+    }
+
+    // Delete from requests
+    try {
+      await this.deletePluginRequest(id);
+      deletedFromRequests = true;
+    } catch (error) {
+      // Request might not exist
+    }
+
+    // Delete from approved plugins
+    try {
+      if (approvedPlugin) {
+        await this.deletePlugin(approvedPlugin.id);
+        deletedFromApproved = true;
+      } else {
+        // Try to delete by ID directly (in case it's an approved plugin ID)
+        await this.deletePlugin(id);
+        deletedFromApproved = true;
+      }
+    } catch (error) {
+      // Plugin might not exist in approved list
+    }
+
+    return {
+      deletedFromRequests,
+      deletedFromApproved,
+      approvedPlugin: approvedPlugin ? { id: approvedPlugin.id, name: approvedPlugin.name } : null
+    };
   }
