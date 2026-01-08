@@ -936,16 +936,17 @@ app.get('/api/session/:sessionId/file/:filename', async (req, res) => {
 
 app.get('/api/admin/plugins', verifyAdmin, async (req, res) => {
   try {
-    const plugins = await pluginService.getPlugins({ includeAll: true }); // Include all plugins for admin
+    // Get plugin requests for admin management
+    const pluginRequests = await pluginService.getAllPluginRequests();
     res.json({
       success: true,
-      plugins
+      plugins: pluginRequests // Return requests as "plugins" for frontend compatibility
     });
   } catch (error) {
-    console.error('Admin Plugins Error:', error);
+    console.error('Admin Plugin Requests Error:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to get plugins'
+      error: 'Failed to get plugin requests'
     });
   }
 });
@@ -954,17 +955,18 @@ app.put('/api/admin/plugins/:id/status', verifyAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
+    const adminUser = req.user?.login || 'admin';
 
-    const plugin = await pluginService.updatePluginStatus(id, status);
+    const request = await pluginService.updatePluginRequestStatus(id, status, adminUser);
     res.json({
       success: true,
-      plugin
+      plugin: request // Return request as "plugin" for frontend compatibility
     });
   } catch (error) {
-    console.error('Admin Update Plugin Status Error:', error);
+    console.error('Admin Update Plugin Request Status Error:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to update plugin status'
+      error: error.message || 'Failed to update plugin request status'
     });
   }
 });
@@ -972,31 +974,31 @@ app.put('/api/admin/plugins/:id/status', verifyAdmin, async (req, res) => {
 app.delete('/api/admin/plugins/:id', verifyAdmin, async (req, res) => {
   try {
     const { id } = req.params;
-    await pluginService.deletePlugin(id);
+    await pluginService.deletePluginRequest(id);
     res.json({
       success: true,
-      message: 'Plugin deleted successfully'
+      message: 'Plugin request deleted successfully'
     });
   } catch (error) {
-    console.error('Admin Delete Plugin Error:', error);
+    console.error('Admin Delete Plugin Request Error:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to delete plugin'
+      error: error.message || 'Failed to delete plugin request'
     });
   }
 });
 
 app.get('/api/admin/plugins/download', verifyAdmin, async (req, res) => {
   try {
-    const plugins = await pluginService.getAllPlugins();
+    const pluginRequests = await pluginService.getAllPluginRequests();
     res.setHeader('Content-Type', 'application/json');
-    res.setHeader('Content-Disposition', 'attachment; filename=plugins.json');
-    res.json(plugins);
+    res.setHeader('Content-Disposition', 'attachment; filename=plugin-requests.json');
+    res.json(pluginRequests);
   } catch (error) {
-    console.error('Admin Download Plugins Error:', error);
+    console.error('Admin Download Plugin Requests Error:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to download plugins'
+      error: 'Failed to download plugin requests'
     });
   }
 });
