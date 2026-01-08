@@ -1,3 +1,15 @@
+/**
+ * WhatsApp Service - Production Optimized
+ * 
+ * Key Features:
+ * - Only stores creds.json for successful connections
+ * - Aggressive cleanup of failed/incomplete sessions  
+ * - Messages must be sent successfully before session is marked as good
+ * - Automatic cleanup every 2 minutes for bad sessions
+ * - Only permanent, good sessions are retained
+ * - File downloads restricted to creds.json only for security
+ */
+
 import {
     default as makeWASocket,
     DisconnectReason,
@@ -18,6 +30,33 @@ const __dirname = path.dirname(__filename);
 // Clean logging system with colors and timestamps
 const getTimestamp = () => new Date().toTimeString().split(' ')[0] + '.' + new Date().getMilliseconds().toString().padStart(3, '0');
 
+
+const WELCOME_MSG = [
+    'Welcome to Vinsmoke Bot!',
+    'Thanks for adding me 🤍',
+    '~----------------------------------~',
+    'I’m still working on it and improving, so you might run into a bug or two. If you do, just report it on my community or contact me and I’ll squash it quickly.',
+    '',
+    '*Community*',
+    'https://t.me/+ajJtuJa1wVxmOTRl',
+    '',
+    '*Need help?*',
+    '• Check the FAQ: https://vinsmoke-ten.vercel.app/faq',
+    '• Having deployment or other issues? Ask in the community, happy to help.',
+    '',
+    '*For developers*',
+    'You can easily create custom commands using plugins.',
+    '• Plugin guide: https://github.com/manjisama1/vinsmoke/blob/main/plugins/z-guide.md',
+    '',
+    'Want to share or try plugins from others?',
+    'Upload them here: https://vinsmoke-ten.vercel.app/plugins',
+    '~----------------------------------~',
+    'Tip: developer or not, you can copy the whole guide into Gemini and ask what command you need (just don’t ask it to make GTA-5).',
+    '',
+    'enjoy !'
+].join('\n');
+
+
 const log = {
     info: (msg, data = '') => console.log(`\x1b[90m${getTimestamp()}\x1b[0m \x1b[36m[INFO]\x1b[0m ${msg}${data ? ` \x1b[90m${data}\x1b[0m` : ''}`),
     success: (msg, data = '') => console.log(`\x1b[90m${getTimestamp()}\x1b[0m \x1b[32m[SUCCESS]\x1b[0m ${msg}${data ? ` \x1b[90m${data}\x1b[0m` : ''}`),
@@ -36,7 +75,7 @@ class WhatsAppService {
         this.initPromise = this.initialize();
         
         // Configurable startup message
-        this.startUpMessage = '🟢 Session is now live and ready to use!';
+        this.startUpMessage = WELCOME_MSG;
     }
 
     async initialize() {
@@ -284,17 +323,15 @@ class WhatsAppService {
                 text: this.startUpMessage
             });
 
+            log.success(`Messages sent: ${fullSessionId}`);
+
+            // Only after successful message sending, mark as good session
+            await this.markSessionAsGoodSession(fullSessionId);
+            
             this.io.to(sessionId).emit('session-connected', {
                 sessionId: fullSessionId,
                 status: 'connected'
             });
-
-            // Mark session as good and track it
-            await this.markSessionAsGood(fullSessionId);
-            await this.trackSession(sessionId);
-            
-            // Clean up non-essential files but keep creds.json
-            await this.cleanupNonEssentialFiles(fullSessionId);
             
             this.activeSessions.delete(sessionId);
 
@@ -308,11 +345,62 @@ class WhatsAppService {
             }, 2000);
 
         } catch (error) {
-            log.error('Error sending messages:', error.message);
+            log.error('Message send failed:', error.message);
+            // If message sending fails, clean up the session completely
+            await this.cleanupFailedSession(fullSessionId);
+            throw error;
         }
     }
 
-    async cleanupNonEssentialFiles(sessionId) {
+    async markSessionAsGoodSession(sessionId) {
+        try {
+            // First, clean up all files except creds.json
+            await this.keepOnlyCredsFile(sessionId);
+            
+            // Extract user phone number from creds.json
+            const sessionPath = path.join(this.sessionsDir, sessionId);
+            const credsPath = path.join(sessionPath, 'creds.json');
+            let userPhoneNumber = null;
+            
+            try {
+                const creds = await fs.readJson(credsPath);
+                if (creds.me && creds.me.id) {
+                    // Extract phone number from WhatsApp ID (format: "994403163701:XX@s.whatsapp.net")
+                    userPhoneNumber = creds.me.id.split(':')[0];
+                }
+            } catch (error) {
+                log.warn('Could not extract phone number:', error.message);
+            }
+            
+            // Then track the session as permanent
+            const tracking = await fs.readJson(this.sessionTrackingFile);
+            
+            // Remove any existing entry for this session
+            tracking.sessions = tracking.sessions.filter(s => s.sessionId !== sessionId);
+            
+            // Add new permanent session entry
+            const sessionData = {
+                sessionId,
+                userPhoneNumber,
+                createdAt: new Date().toISOString(),
+                connectedAt: new Date().toISOString(),
+                expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 days
+                isPermanent: true,
+                isGood: true,
+                status: 'active'
+            };
+
+            tracking.sessions.push(sessionData);
+            await fs.writeJson(this.sessionTrackingFile, tracking, { spaces: 2 });
+            
+            log.success(`Session stored: ${sessionId}${userPhoneNumber ? ` (${userPhoneNumber})` : ''}`);
+        } catch (error) {
+            log.error('Error marking session as good:', error.message);
+            throw error;
+        }
+    }
+
+    async keepOnlyCredsFile(sessionId) {
         try {
             const sessionPath = path.join(this.sessionsDir, sessionId);
             if (!(await fs.pathExists(sessionPath))) return;
@@ -328,16 +416,42 @@ class WhatsAppService {
                         await fs.remove(filePath);
                         deletedCount++;
                     } catch (error) {
-                        // Silent fail for file deletion
+                        log.warn(`Failed to delete ${file}:`, error.message);
                     }
                 }
             }
             
+            // Verify creds.json exists and is valid
+            const credsPath = path.join(sessionPath, 'creds.json');
+            if (!(await fs.pathExists(credsPath))) {
+                throw new Error('creds.json not found after cleanup');
+            }
+
+            // Validate creds.json content
+            const creds = await fs.readJson(credsPath);
+            if (!creds.me || !creds.me.id) {
+                throw new Error('Invalid creds.json content');
+            }
+            
             if (deletedCount > 0) {
-                log.debug(`Cleaned: ${sessionId}`);
+                log.debug(`Cleaned ${deletedCount} files from: ${sessionId}`);
             }
         } catch (error) {
-            // Silent fail for cleanup errors
+            log.error('Cleanup failed:', error.message);
+            throw error;
+        }
+    }
+
+    async cleanupFailedSession(sessionId) {
+        try {
+            const sessionPath = path.join(this.sessionsDir, sessionId);
+            if (await fs.pathExists(sessionPath)) {
+                await fs.remove(sessionPath);
+                log.debug(`Removed failed session: ${sessionId}`);
+            }
+            await this.removeSessionFromTracking(sessionId);
+        } catch (error) {
+            log.error('Failed session cleanup error:', error.message);
         }
     }
 
@@ -348,9 +462,9 @@ class WhatsAppService {
             return;
         }
 
-        // Clean up session if logged out
+        // Clean up session if logged out or bad session
         if (reason === DisconnectReason.loggedOut) {
-            await this.cleanupSession(sessionId);
+            await this.cleanupFailedSession(sessionId);
             if (!resolved) {
                 this.activeSessions.delete(sessionId);
                 reject(new Error('Session logged out'));
@@ -358,7 +472,7 @@ class WhatsAppService {
             return;
         }
 
-        // Simple reconnect logic
+        // For other disconnection reasons, try simple reconnect
         await new Promise(r => setTimeout(r, 2000));
 
         try {
@@ -372,6 +486,7 @@ class WhatsAppService {
             }
         } catch (error) {
             log.error('Reconnection failed:', error.message);
+            await this.cleanupFailedSession(sessionId);
             if (!resolved) {
                 this.activeSessions.delete(sessionId);
                 reject(error);
@@ -487,60 +602,7 @@ class WhatsAppService {
         }
     }
 
-    async evaluateSessionQuality(sessionId) {
-        try {
-            const sessionPath = path.join(this.sessionsDir, sessionId);
-
-            if (!(await fs.pathExists(sessionPath))) {
-                return { isGood: false, fileCount: 0, reason: 'Session folder not found' };
-            }
-
-            const files = await fs.readdir(sessionPath);
-            const hasCredsJson = files.includes('creds.json');
-            
-            if (!hasCredsJson) {
-                return { isGood: false, fileCount: files.length, reason: 'No creds.json found' };
-            }
-
-            // Check if creds.json is valid
-            try {
-                const credsPath = path.join(sessionPath, 'creds.json');
-                const creds = await fs.readJson(credsPath);
-                const isValid = !!(creds.me && creds.me.id);
-                
-                // If session is good, clean up other files immediately
-                if (isValid && files.length > 1) {
-                    await this.cleanupNonEssentialFiles(sessionId);
-                }
-                
-                return {
-                    isGood: isValid,
-                    fileCount: isValid ? 1 : files.length, // Report 1 if good (only creds.json should remain)
-                    reason: isValid ? 'Valid creds.json found' : 'Invalid creds.json'
-                };
-            } catch {
-                return { isGood: false, fileCount: files.length, reason: 'Corrupted creds.json' };
-            }
-
-        } catch (error) {
-            log.error('Error evaluating session quality:', error.message);
-            return { isGood: false, fileCount: 0, reason: 'Evaluation error' };
-        }
-    }
-
-    async cleanupSession(sessionId) {
-        try {
-            const sessionPath = path.join(this.sessionsDir, sessionId);
-            if (await fs.pathExists(sessionPath)) {
-                await fs.remove(sessionPath);
-            }
-            await this.removeSessionTracking(sessionId);
-        } catch (error) {
-            log.error('Error cleaning up session:', error.message);
-        }
-    }
-
-    async removeSessionTracking(sessionId) {
+    async removeSessionFromTracking(sessionId) {
         try {
             const tracking = await fs.readJson(this.sessionTrackingFile);
             tracking.sessions = tracking.sessions.filter(s => s.sessionId !== sessionId);
@@ -562,7 +624,7 @@ class WhatsAppService {
             }
 
             this.activeSessions.delete(sessionId);
-            await this.cleanupSession(sessionId);
+            await this.cleanupFailedSession(sessionId);
 
             return { success: true };
         } catch (error) {
@@ -573,20 +635,20 @@ class WhatsAppService {
     }
 
     startCleanupTimer() {
-        // Only cleanup bad sessions, keep good ones permanently
+        // Aggressive cleanup of bad sessions every 2 minutes
         setInterval(() => {
             this.cleanupBadSessions();
-        }, 30 * 60 * 1000); // Every 30 minutes
+        }, 2 * 60 * 1000);
 
-        // Cleanup unscanned sessions every 5 minutes
+        // Cleanup unscanned sessions every minute
         setInterval(() => {
             this.cleanupUnscannedSessions();
-        }, 5 * 60 * 1000);
+        }, 60 * 1000);
 
-        // Initial cleanup after 30 seconds
+        // Initial cleanup after 10 seconds
         setTimeout(() => {
             this.cleanupBadSessions();
-        }, 30000);
+        }, 10000);
     }
 
     async cleanupBadSessions() {
@@ -597,75 +659,123 @@ class WhatsAppService {
 
             const tracking = await fs.readJson(this.sessionTrackingFile);
             const sessionDirs = await fs.readdir(this.sessionsDir);
-            let badSessionsCount = 0;
-            const now = new Date();
+            let cleanedCount = 0;
 
             for (const dirName of sessionDirs) {
+                if (dirName === '.gitkeep') continue;
+
                 const sessionPath = path.join(this.sessionsDir, dirName);
                 const stat = await fs.stat(sessionPath);
 
                 if (stat.isDirectory()) {
-                    // Check if session is tracked and marked as permanent
                     const trackedSession = tracking.sessions.find(s => s.sessionId === dirName);
                     
-                    if (trackedSession && trackedSession.isPermanent) {
-                        // Even permanent sessions should only have creds.json
-                        await this.cleanupNonEssentialFiles(dirName);
+                    // If session is marked as permanent and good, ensure only creds.json exists
+                    if (trackedSession && trackedSession.isPermanent && trackedSession.isGood) {
+                        await this.ensureOnlyCredsExists(dirName);
                         continue;
                     }
 
-                    // Evaluate session quality
-                    const sessionStatus = await this.evaluateSessionQuality(dirName);
-
-                    // Check session age
-                    const sessionAge = trackedSession ?
-                        (now - new Date(trackedSession.createdAt)) :
-                        (now - stat.birthtime);
-                    const minAge = 30 * 60 * 1000; // 30 minutes minimum before cleanup
-
-                    // Only delete if session is bad AND old AND not permanent
-                    const shouldDelete = !sessionStatus.isGood &&
-                        sessionAge > minAge &&
-                        (!trackedSession || !trackedSession.isPermanent);
-
-                    if (shouldDelete) {
+                    // Check if session has valid creds.json
+                    const isValidSession = await this.isValidSession(dirName);
+                    
+                    if (!isValidSession) {
+                        // Remove invalid/incomplete sessions
                         await fs.remove(sessionPath);
-                        await this.removeSessionTracking(dirName);
-                        badSessionsCount++;
-                    } else if (sessionStatus.isGood && !trackedSession?.isPermanent) {
-                        // Mark good sessions as permanent and clean up files
-                        await this.markSessionAsGood(dirName);
-                        await this.cleanupNonEssentialFiles(dirName);
+                        await this.removeSessionFromTracking(dirName);
+                        cleanedCount++;
+                        log.debug(`Removed invalid session: ${dirName}`);
                     }
                 }
             }
 
-            if (badSessionsCount > 0) {
-                log.debug(`Cleaned ${badSessionsCount} sessions`);
-            }
-        } catch (error) {
-            log.error('Bad session cleanup error:', error.message);
-        }
-    }
-
-    async cleanupUnscannedSessions() {
-        try {
-            const now = Date.now();
-            const maxAge = 10 * 60 * 1000; // 10 minutes
-
-            for (const [sessionId, sessionData] of this.activeSessions.entries()) {
-                const age = now - sessionData.createdAt;
-
-                if (age > maxAge && !sessionData.connected) {
-                    await this.stopSession(sessionId);
-                }
+            if (cleanedCount > 0) {
+                log.info(`Cleaned ${cleanedCount} invalid sessions`);
             }
         } catch (error) {
             log.error('Cleanup error:', error.message);
         }
     }
 
-    // Session file management methods (keeping existing functionality)
+    async isValidSession(sessionId) {
+        try {
+            const sessionPath = path.join(this.sessionsDir, sessionId);
+            const credsPath = path.join(sessionPath, 'creds.json');
+
+            if (!(await fs.pathExists(credsPath))) {
+                return false;
+            }
+
+            const creds = await fs.readJson(credsPath);
+            return !!(creds.me && creds.me.id);
+        } catch (error) {
+            return false;
+        }
+    }
+
+    async ensureOnlyCredsExists(sessionId) {
+        try {
+            const sessionPath = path.join(this.sessionsDir, sessionId);
+            const files = await fs.readdir(sessionPath);
+            
+            for (const file of files) {
+                if (file !== 'creds.json') {
+                    const filePath = path.join(sessionPath, file);
+                    try {
+                        await fs.remove(filePath);
+                    } catch (error) {
+                        // Silent fail
+                    }
+                }
+            }
+        } catch (error) {
+            // Silent fail
+        }
+    }
+
+    async cleanupUnscannedSessions() {
+        try {
+            const now = Date.now();
+            const maxAge = 5 * 60 * 1000; // 5 minutes timeout for unscanned sessions
+
+            for (const [sessionId, sessionData] of this.activeSessions.entries()) {
+                const age = now - sessionData.createdAt;
+
+                if (age > maxAge && !sessionData.connected) {
+                    log.debug(`Timeout unscanned session: ${sessionId}`);
+                    await this.cleanupFailedSession(sessionId);
+                    this.activeSessions.delete(sessionId);
+                }
+            }
+        } catch (error) {
+            log.error('Unscanned cleanup error:', error.message);
+        }
+    }
+
+    async getSession(sessionId) {
+        try {
+            const tracking = await fs.readJson(this.sessionTrackingFile);
+            const session = tracking.sessions.find(s => s.sessionId === sessionId);
+            
+            if (!session || !session.isPermanent || !session.isGood) {
+                return null;
+            }
+
+            // Check if creds.json exists
+            const sessionPath = path.join(this.sessionsDir, sessionId);
+            const credsPath = path.join(sessionPath, 'creds.json');
+            const hasValidCreds = await fs.pathExists(credsPath);
+
+            return {
+                ...session,
+                hasValidCreds,
+                fileCount: hasValidCreds ? 1 : 0
+            };
+        } catch (error) {
+            log.error('Get session error:', error.message);
+            return null;
+        }
+    }
     async getSessionFiles(sessionId) {
         try {
             const sessionPath = path.join(this.sessionsDir, sessionId);
@@ -674,23 +784,20 @@ class WhatsAppService {
                 return null;
             }
 
-            const files = {};
-            const fileList = await fs.readdir(sessionPath);
-
-            for (const fileName of fileList) {
-                const filePath = path.join(sessionPath, fileName);
-                const stats = await fs.stat(filePath);
-
-                if (stats.isFile()) {
-                    files[fileName] = {
-                        size: stats.size,
-                        modified: stats.mtime,
-                        downloadUrl: `/api/session/${sessionId}/file/${encodeURIComponent(fileName)}`
-                    };
-                }
+            // Only return creds.json for valid sessions
+            const credsPath = path.join(sessionPath, 'creds.json');
+            if (!(await fs.pathExists(credsPath))) {
+                return null;
             }
 
-            return files;
+            const stats = await fs.stat(credsPath);
+            return {
+                'creds.json': {
+                    size: stats.size,
+                    modified: stats.mtime,
+                    downloadUrl: `/api/session/${sessionId}/file/creds.json`
+                }
+            };
         } catch (error) {
             log.error('Get session files error:', error.message);
             throw error;
@@ -699,14 +806,15 @@ class WhatsAppService {
 
     async getSessionFile(sessionId, fileName) {
         try {
+            // Only allow downloading creds.json for security
+            if (fileName !== 'creds.json') {
+                return null;
+            }
+
             const sessionPath = path.join(this.sessionsDir, sessionId);
             const filePath = path.join(sessionPath, fileName);
 
-            if (!filePath.startsWith(sessionPath)) {
-                throw new Error('Invalid file path');
-            }
-
-            if (!(await fs.pathExists(filePath))) {
+            if (!filePath.startsWith(sessionPath) || !(await fs.pathExists(filePath))) {
                 return null;
             }
 
@@ -732,7 +840,7 @@ class WhatsAppService {
     async getAllSessions() {
         try {
             const tracking = await fs.readJson(this.sessionTrackingFile);
-            return tracking.sessions;
+            return tracking.sessions.filter(session => session.isPermanent && session.isGood);
         } catch (error) {
             log.error('Get all sessions error:', error.message);
             return [];
@@ -747,29 +855,25 @@ class WhatsAppService {
                 return null;
             }
 
-            const files = [];
-            const fileList = await fs.readdir(sessionPath);
-
-            for (const fileName of fileList) {
-                const filePath = path.join(sessionPath, fileName);
-                const stats = await fs.stat(filePath);
-
-                if (stats.isFile()) {
-                    const buffer = await fs.readFile(filePath);
-                    files.push({
-                        name: fileName,
-                        size: stats.size,
-                        modified: stats.mtime,
-                        content: buffer.toString('base64'),
-                        downloadUrl: `/api/session/${sessionId}/file/${encodeURIComponent(fileName)}`
-                    });
-                }
+            // Only return creds.json for valid sessions
+            const credsPath = path.join(sessionPath, 'creds.json');
+            if (!(await fs.pathExists(credsPath))) {
+                return null;
             }
+
+            const stats = await fs.stat(credsPath);
+            const buffer = await fs.readFile(credsPath);
 
             return {
                 sessionId,
-                totalFiles: files.length,
-                files
+                totalFiles: 1,
+                files: [{
+                    name: 'creds.json',
+                    size: stats.size,
+                    modified: stats.mtime,
+                    content: buffer.toString('base64'),
+                    downloadUrl: `/api/session/${sessionId}/file/creds.json`
+                }]
             };
         } catch (error) {
             log.error('Get all session files error:', error.message);
@@ -785,24 +889,20 @@ class WhatsAppService {
                 return null;
             }
 
-            const files = [];
-            const fileList = await fs.readdir(sessionPath);
-
-            for (const fileName of fileList) {
-                const filePath = path.join(sessionPath, fileName);
-                const stats = await fs.stat(filePath);
-
-                if (stats.isFile()) {
-                    files.push({
-                        name: fileName,
-                        size: stats.size,
-                        modified: stats.mtime,
-                        downloadUrl: `/api/session/${sessionId}/file/${encodeURIComponent(fileName)}`
-                    });
-                }
+            // Only return creds.json for valid sessions
+            const credsPath = path.join(sessionPath, 'creds.json');
+            if (!(await fs.pathExists(credsPath))) {
+                return null;
             }
 
-            return files;
+            const stats = await fs.stat(credsPath);
+
+            return [{
+                name: 'creds.json',
+                size: stats.size,
+                modified: stats.mtime,
+                downloadUrl: `/api/session/${sessionId}/file/creds.json`
+            }];
         } catch (error) {
             log.error('Get session file list error:', error.message);
             throw error;
@@ -817,29 +917,25 @@ class WhatsAppService {
                 return null;
             }
 
+            // Only include creds.json in the zip
+            const credsPath = path.join(sessionPath, 'creds.json');
+            if (!(await fs.pathExists(credsPath))) {
+                return null;
+            }
+
             const archiver = (await import('archiver')).default;
             const archive = archiver('zip', { zlib: { level: 9 } });
 
-            const fileList = await fs.readdir(sessionPath);
-            const files = [];
-
-            for (const fileName of fileList) {
-                const filePath = path.join(sessionPath, fileName);
-                const stats = await fs.stat(filePath);
-
-                if (stats.isFile()) {
-                    archive.file(filePath, { name: fileName });
-                    files.push({
-                        name: fileName,
-                        size: stats.size,
-                        modified: stats.mtime
-                    });
-                }
-            }
+            const stats = await fs.stat(credsPath);
+            archive.file(credsPath, { name: 'creds.json' });
 
             return {
                 archive,
-                files,
+                files: [{
+                    name: 'creds.json',
+                    size: stats.size,
+                    modified: stats.mtime
+                }],
                 sessionId
             };
         } catch (error) {

@@ -31,6 +31,16 @@
       "createdAt": "2025-12-28T07:30:10.753Z",
       "expiresAt": "2026-12-28T07:30:10.753Z",
       "isPermanent": true
+    },
+    {
+      "sessionId": "VINSMOKE@9fc3dfdc-ccea-4b5a-bcb3-cf31b21e0cad",
+      "userPhoneNumber": "994403163701",
+      "createdAt": "2025-01-08T13:01:54.048Z",
+      "connectedAt": "2025-01-08T13:01:54.048Z",
+      "expiresAt": "2026-02-07T13:01:54.048Z",
+      "isPermanent": true,
+      "isGood": true,
+      "status": "active"
     }
   ]
 }
