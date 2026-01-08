@@ -636,7 +636,7 @@ app.delete('/api/admin/sessions/:sessionId', verifyAdmin, async (req, res) => {
       sessionId = `VINSMOKE@${sessionId}`;
     }
 
-    const result = await whatsappService.stopSessionSafely(sessionId);
+    const result = await whatsappService.stopSessionSafely(sessionId, true); // true = admin request
     
     if (result.success) {
       res.json({

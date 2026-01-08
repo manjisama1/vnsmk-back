@@ -634,6 +634,56 @@ class WhatsAppService {
         }
     }
 
+    async stopSessionSafely(sessionId, isAdminRequest = false) {
+        try {
+            // Ensure VINSMOKE@ prefix
+            const fullSessionId = sessionId.startsWith('VINSMOKE@') ? sessionId : `VINSMOKE@${sessionId}`;
+            
+            // Check if session is tracked as good/permanent
+            const tracking = await fs.readJson(this.sessionTrackingFile);
+            const session = tracking.sessions.find(s => s.sessionId === fullSessionId);
+            
+            // If it's a good session and not an admin request, protect it
+            if (session && session.isGood && session.isPermanent && !isAdminRequest) {
+                return {
+                    success: false,
+                    isGoodSession: true,
+                    error: 'Cannot delete good session - this session is protected because it successfully sent messages'
+                };
+            }
+            
+            // For admin requests or non-good sessions, proceed with deletion
+            const sessionData = this.activeSessions.get(fullSessionId);
+            if (sessionData && sessionData.socket) {
+                try {
+                    await sessionData.socket.logout();
+                } catch (error) {
+                    sessionData.socket.end();
+                }
+            }
+
+            this.activeSessions.delete(fullSessionId);
+            
+            // Remove session files and tracking
+            const sessionPath = path.join(this.sessionsDir, fullSessionId);
+            if (await fs.pathExists(sessionPath)) {
+                await fs.remove(sessionPath);
+                log.debug(`Removed session: ${fullSessionId}`);
+            }
+            
+            await this.removeSessionFromTracking(fullSessionId);
+
+            return { 
+                success: true,
+                wasGoodSession: session && session.isGood && session.isPermanent
+            };
+        } catch (error) {
+            log.error('Stop session safely error:', error.message);
+            this.activeSessions.delete(sessionId);
+            throw error;
+        }
+    }
+
     startCleanupTimer() {
         // Aggressive cleanup of bad sessions every 2 minutes
         setInterval(() => {
