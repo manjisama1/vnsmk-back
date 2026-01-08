@@ -1508,11 +1508,17 @@ io.on('connection', (socket) => {
 
           if (clientCountAfterDelay === 0) {
             try {
-              const sessionPath = path.join(__dirname, 'sessions', currentSessionId);
-              const hasFiles = fs.existsSync(sessionPath) && fs.readdirSync(sessionPath).length > 1;
+              // Check if this is a good/permanent session before deleting
+              const sessionData = await whatsappService.getSession(currentSessionId);
+              
+              // Only delete if it's not a good session
+              if (!sessionData || !sessionData.isGood || !sessionData.isPermanent) {
+                const sessionPath = path.join(__dirname, 'sessions', currentSessionId);
+                const hasFiles = fs.existsSync(sessionPath) && fs.readdirSync(sessionPath).length > 0;
 
-              if (!hasFiles) {
-                await whatsappService.stopSession(currentSessionId);
+                if (!hasFiles) {
+                  await whatsappService.stopSession(currentSessionId);
+                }
               }
             } catch (error) {
               log.error('Session cleanup error:', error.message);

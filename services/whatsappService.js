@@ -346,7 +346,8 @@ class WhatsAppService {
 
         } catch (error) {
             log.error('Message send failed:', error.message);
-            // If message sending fails, clean up the session completely
+            // Mark session as BAD and clean up
+            await this.markSessionAsBad(fullSessionId, 'Failed to send welcome messages');
             await this.cleanupFailedSession(fullSessionId);
             throw error;
         }
@@ -372,21 +373,21 @@ class WhatsAppService {
                 log.warn('Could not extract phone number:', error.message);
             }
             
-            // Then track the session as permanent
+            // Update session tracking - mark as GOOD session
             const tracking = await fs.readJson(this.sessionTrackingFile);
             
             // Remove any existing entry for this session
             tracking.sessions = tracking.sessions.filter(s => s.sessionId !== sessionId);
             
-            // Add new permanent session entry
+            // Add new GOOD session entry
             const sessionData = {
                 sessionId,
                 userPhoneNumber,
                 createdAt: new Date().toISOString(),
                 connectedAt: new Date().toISOString(),
-                expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 days
+                expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(), // 1 year
                 isPermanent: true,
-                isGood: true,
+                isGood: true, // GOOD SESSION - successfully sent messages
                 status: 'active'
             };
 
@@ -447,11 +448,33 @@ class WhatsAppService {
             const sessionPath = path.join(this.sessionsDir, sessionId);
             if (await fs.pathExists(sessionPath)) {
                 await fs.remove(sessionPath);
-                log.debug(`Removed failed session: ${sessionId}`);
+                log.debug(`Removed bad session: ${sessionId}`);
             }
             await this.removeSessionFromTracking(sessionId);
         } catch (error) {
             log.error('Failed session cleanup error:', error.message);
+        }
+    }
+
+    async markSessionAsBad(sessionId, reason = 'Failed to send messages') {
+        try {
+            // Mark session as BAD in tracking
+            const tracking = await fs.readJson(this.sessionTrackingFile);
+            const sessionIndex = tracking.sessions.findIndex(s => s.sessionId === sessionId);
+            
+            if (sessionIndex !== -1) {
+                tracking.sessions[sessionIndex].isGood = false;
+                tracking.sessions[sessionIndex].isPermanent = false;
+                tracking.sessions[sessionIndex].status = 'failed';
+                tracking.sessions[sessionIndex].failureReason = reason;
+                tracking.sessions[sessionIndex].failedAt = new Date().toISOString();
+                
+                await fs.writeJson(this.sessionTrackingFile, tracking, { spaces: 2 });
+            }
+            
+            log.debug(`Marked session as bad: ${sessionId} - ${reason}`);
+        } catch (error) {
+            log.error('Error marking session as bad:', error.message);
         }
     }
 
@@ -614,7 +637,23 @@ class WhatsAppService {
 
     async stopSession(sessionId) {
         try {
-            const sessionData = this.activeSessions.get(sessionId);
+            // Ensure VINSMOKE@ prefix
+            const fullSessionId = sessionId.startsWith('VINSMOKE@') ? sessionId : `VINSMOKE@${sessionId}`;
+            
+            // Check if this is a good session before stopping
+            const tracking = await fs.readJson(this.sessionTrackingFile);
+            const session = tracking.sessions.find(s => s.sessionId === fullSessionId);
+            
+            // Protect good sessions from accidental deletion
+            if (session && session.isGood && session.isPermanent) {
+                return { 
+                    success: false, 
+                    error: 'Cannot delete good session - this session is protected',
+                    isGoodSession: true 
+                };
+            }
+
+            const sessionData = this.activeSessions.get(fullSessionId);
             if (sessionData && sessionData.socket) {
                 try {
                     await sessionData.socket.logout();
@@ -623,8 +662,8 @@ class WhatsAppService {
                 }
             }
 
-            this.activeSessions.delete(sessionId);
-            await this.cleanupFailedSession(sessionId);
+            this.activeSessions.delete(fullSessionId);
+            await this.cleanupFailedSession(fullSessionId);
 
             return { success: true };
         } catch (error) {
@@ -685,20 +724,20 @@ class WhatsAppService {
     }
 
     startCleanupTimer() {
-        // Aggressive cleanup of bad sessions every 2 minutes
+        // Cleanup bad sessions every 10 minutes
         setInterval(() => {
             this.cleanupBadSessions();
-        }, 2 * 60 * 1000);
+        }, 10 * 60 * 1000);
 
-        // Cleanup unscanned sessions every minute
+        // Cleanup unscanned sessions every 5 minutes
         setInterval(() => {
             this.cleanupUnscannedSessions();
-        }, 60 * 1000);
+        }, 5 * 60 * 1000);
 
-        // Initial cleanup after 10 seconds
+        // Initial cleanup after 30 seconds
         setTimeout(() => {
             this.cleanupBadSessions();
-        }, 10000);
+        }, 30000);
     }
 
     async cleanupBadSessions() {
@@ -720,27 +759,26 @@ class WhatsAppService {
                 if (stat.isDirectory()) {
                     const trackedSession = tracking.sessions.find(s => s.sessionId === dirName);
                     
-                    // If session is marked as permanent and good, ensure only creds.json exists
+                    // Protect good sessions - only clean extra files
                     if (trackedSession && trackedSession.isPermanent && trackedSession.isGood) {
                         await this.ensureOnlyCredsExists(dirName);
                         continue;
                     }
 
-                    // Check if session has valid creds.json
+                    // Only remove bad sessions (failed to send messages or invalid)
                     const isValidSession = await this.isValidSession(dirName);
+                    const isBadSession = trackedSession && trackedSession.isGood === false;
                     
-                    if (!isValidSession) {
-                        // Remove invalid/incomplete sessions
+                    if (!isValidSession || isBadSession) {
                         await fs.remove(sessionPath);
                         await this.removeSessionFromTracking(dirName);
                         cleanedCount++;
-                        log.debug(`Removed invalid session: ${dirName}`);
                     }
                 }
             }
 
             if (cleanedCount > 0) {
-                log.info(`Cleaned ${cleanedCount} invalid sessions`);
+                log.info(`Cleaned ${cleanedCount} bad sessions`);
             }
         } catch (error) {
             log.error('Cleanup error:', error.message);
