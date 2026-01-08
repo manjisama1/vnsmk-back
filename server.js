@@ -582,6 +582,9 @@ const verifyAdmin = (req, res, next) => {
   }
 };
 
+// Alias for backward compatibility
+const authenticateAdmin = verifyAdmin;
+
 // Admin Routes
 app.get('/api/admin/stats', verifyAdmin, async (req, res) => {
   try {
