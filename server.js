@@ -381,12 +381,24 @@ app.get('/api/session/:sessionId', async (req, res) => {
 app.delete('/api/session/:sessionId', async (req, res) => {
   try {
     const { sessionId } = req.params;
-    await whatsappService.stopSession(sessionId);
-
-    res.json({
-      success: true,
-      message: 'Session deleted successfully'
-    });
+    const result = await whatsappService.stopSessionSafely(sessionId);
+    
+    if (result.success) {
+      res.json({
+        success: true,
+        message: 'Session deleted successfully'
+      });
+    } else if (result.isGoodSession) {
+      res.status(403).json({
+        success: false,
+        error: 'Cannot delete good session - this session is protected'
+      });
+    } else {
+      res.status(400).json({
+        success: false,
+        error: result.error || 'Failed to delete session'
+      });
+    }
   } catch (error) {
     console.error('Delete Session Error:', error);
     res.status(500).json({
@@ -621,11 +633,24 @@ app.delete('/api/admin/sessions/:sessionId', verifyAdmin, async (req, res) => {
       sessionId = `VINSMOKE@${sessionId}`;
     }
 
-    await whatsappService.stopSession(sessionId);
-    res.json({
-      success: true,
-      message: 'Session deleted successfully'
-    });
+    const result = await whatsappService.stopSessionSafely(sessionId);
+    
+    if (result.success) {
+      res.json({
+        success: true,
+        message: 'Session deleted successfully'
+      });
+    } else if (result.isGoodSession) {
+      res.status(403).json({
+        success: false,
+        error: 'Cannot delete good session - this session is protected because it successfully sent messages'
+      });
+    } else {
+      res.status(400).json({
+        success: false,
+        error: result.error || 'Failed to delete session'
+      });
+    }
   } catch (error) {
     console.error('Admin Delete Session Error:', error);
     res.status(500).json({
