@@ -20,6 +20,7 @@ const log = {
 class PluginService {
   constructor() {
     this.pluginsFile = path.join(__dirname, '../data/plugins.json');
+    this.pluginRequestsFile = path.join(__dirname, '../data/plugin-requests.json');
     this.initialized = false;
     this.initPromise = this.initialize();
     
@@ -50,6 +51,10 @@ class PluginService {
 
     if (!(await fs.pathExists(this.pluginsFile))) {
       await fs.writeJson(this.pluginsFile, []);
+    }
+
+    if (!(await fs.pathExists(this.pluginRequestsFile))) {
+      await fs.writeJson(this.pluginRequestsFile, []);
     }
   }
 
@@ -361,3 +366,149 @@ class PluginService {
 }
 
 export default PluginService;
+  // Plugin Requests Management
+  async addPluginRequest(pluginData) {
+    await this.ensureInitialized();
+    
+    try {
+      const requests = await this.getAllPluginRequests();
+      
+      const newRequest = {
+        id: uuidv4(),
+        ...pluginData,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      
+      requests.push(newRequest);
+      await fs.writeJson(this.pluginRequestsFile, requests, { spaces: 2 });
+      
+      // Clear cache
+      this.cache.delete('plugin-requests');
+      
+      log.success(`Plugin request added: ${newRequest.name} by ${newRequest.author}`);
+      return newRequest;
+    } catch (error) {
+      log.error('Add plugin request failed:', error.message);
+      throw error;
+    }
+  }
+
+  async getAllPluginRequests() {
+    await this.ensureInitialized();
+    
+    const cacheKey = 'plugin-requests';
+    const cached = this.cache.get(cacheKey);
+    
+    if (cached && Date.now() - cached.timestamp < this.cacheTTL) {
+      return cached.data;
+    }
+    
+    try {
+      const requests = await fs.readJson(this.pluginRequestsFile);
+      
+      // Cache the results
+      this.cache.set(cacheKey, {
+        data: requests,
+        timestamp: Date.now()
+      });
+      
+      return requests;
+    } catch (error) {
+      log.error('Get plugin requests failed:', error.message);
+      return [];
+    }
+  }
+
+  async getPluginRequestById(id) {
+    const requests = await this.getAllPluginRequests();
+    return requests.find(request => request.id === id);
+  }
+
+  async updatePluginRequestStatus(id, status, adminUser = null) {
+    await this.ensureInitialized();
+    
+    try {
+      const requests = await this.getAllPluginRequests();
+      const requestIndex = requests.findIndex(request => request.id === id);
+      
+      if (requestIndex === -1) {
+        throw new Error('Plugin request not found');
+      }
+      
+      requests[requestIndex].status = status;
+      requests[requestIndex].updatedAt = new Date().toISOString();
+      
+      if (adminUser) {
+        requests[requestIndex].reviewedBy = adminUser;
+        requests[requestIndex].reviewedAt = new Date().toISOString();
+      }
+      
+      await fs.writeJson(this.pluginRequestsFile, requests, { spaces: 2 });
+      
+      // Clear cache
+      this.cache.delete('plugin-requests');
+      
+      log.success(`Plugin request ${status}: ${requests[requestIndex].name}`);
+      return requests[requestIndex];
+    } catch (error) {
+      log.error('Update plugin request status failed:', error.message);
+      throw error;
+    }
+  }
+
+  async deletePluginRequest(id) {
+    await this.ensureInitialized();
+    
+    try {
+      const requests = await this.getAllPluginRequests();
+      const requestIndex = requests.findIndex(request => request.id === id);
+      
+      if (requestIndex === -1) {
+        throw new Error('Plugin request not found');
+      }
+      
+      const deletedRequest = requests.splice(requestIndex, 1)[0];
+      await fs.writeJson(this.pluginRequestsFile, requests, { spaces: 2 });
+      
+      // Clear cache
+      this.cache.delete('plugin-requests');
+      
+      log.success(`Plugin request deleted: ${deletedRequest.name}`);
+      return deletedRequest;
+    } catch (error) {
+      log.error('Delete plugin request failed:', error.message);
+      throw error;
+    }
+  }
+
+  async approvePluginRequest(id, adminUser = null) {
+    const request = await this.getPluginRequestById(id);
+    if (!request) {
+      throw new Error('Plugin request not found');
+    }
+
+    // Update request status
+    await this.updatePluginRequestStatus(id, 'approved', adminUser);
+    
+    // Add to approved plugins
+    const approvedPlugin = {
+      name: request.name,
+      author: request.author,
+      description: request.description,
+      type: request.type,
+      gistLink: request.gistLink,
+      tags: request.tags || [],
+      features: request.features || [],
+      likes: 0,
+      status: 'approved',
+      submittedBy: request.submittedBy,
+      approvedBy: adminUser,
+      approvedAt: new Date().toISOString()
+    };
+
+    const plugin = await this.addPlugin(approvedPlugin);
+    
+    log.success(`Plugin approved and added: ${plugin.name}`);
+    return { request, plugin };
+  }

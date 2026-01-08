@@ -1355,32 +1355,62 @@ app.get('/api/plugins', async (req, res) => {
 
 app.post('/api/plugins', async (req, res) => {
   try {
-    const { name, description, type, gistLink, author } = req.body;
+    const { 
+      name, 
+      description, 
+      type, 
+      gistLink, 
+      author, 
+      authorName, 
+      authorId, 
+      tags, 
+      features, 
+      submittedBy, 
+      submittedAt 
+    } = req.body;
 
-    if (!name || !description || !type || !gistLink) {
+    // Validate required fields
+    if (!name || !description || !type || !gistLink || !author) {
       return res.status(400).json({
         success: false,
-        error: 'All fields are required'
+        error: 'Missing required fields: name, description, type, gistLink, and author are required'
       });
     }
 
-    const plugin = await pluginService.addPlugin({
-      name,
-      description,
+    // Validate gist URL format
+    const gistUrlPattern = /^https:\/\/gist\.github\.com\/[^\/]+\/[a-f0-9]+$/;
+    if (!gistUrlPattern.test(gistLink)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid GitHub Gist URL format'
+      });
+    }
+
+    const pluginRequest = await pluginService.addPluginRequest({
+      name: name.trim(),
+      description: description.trim(),
       type,
-      gistLink,
-      author: author || 'Anonymous'
+      gistLink: gistLink.trim(),
+      author: author.trim(),
+      authorName: authorName || author,
+      authorId,
+      tags: Array.isArray(tags) ? tags : [],
+      features: Array.isArray(features) ? features : [],
+      submittedBy,
+      submittedAt: submittedAt || new Date().toISOString(),
+      status: 'pending'
     });
 
     res.json({
       success: true,
-      plugin
+      plugin: pluginRequest,
+      message: 'Plugin submitted successfully and is pending approval'
     });
   } catch (error) {
-    console.error('Add Plugin Error:', error);
+    console.error('Add Plugin Request Error:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to add plugin'
+      error: error.message || 'Failed to submit plugin request'
     });
   }
 });
@@ -1529,5 +1559,109 @@ server.listen(PORT, HOST, () => {
     log.success(`OAuth: Enabled`);
   } else {
     log.warn(`OAuth: Disabled`);
+  }
+});
+// Admin Plugin Requests Management
+app.get('/api/admin/plugin-requests', authenticateAdmin, async (req, res) => {
+  try {
+    const requests = await pluginService.getAllPluginRequests();
+    
+    res.json({
+      success: true,
+      requests: requests.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+    });
+  } catch (error) {
+    console.error('Get Plugin Requests Error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch plugin requests'
+    });
+  }
+});
+
+app.put('/api/admin/plugin-requests/:id/status', authenticateAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+    const adminUser = req.user?.login || 'admin';
+
+    if (!['pending', 'approved', 'rejected'].includes(status)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid status. Must be pending, approved, or rejected'
+      });
+    }
+
+    const request = await pluginService.updatePluginRequestStatus(id, status, adminUser);
+    
+    res.json({
+      success: true,
+      request,
+      message: `Plugin request ${status} successfully`
+    });
+  } catch (error) {
+    console.error('Update Plugin Request Status Error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to update plugin request status'
+    });
+  }
+});
+
+app.post('/api/admin/plugin-requests/:id/approve', authenticateAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const adminUser = req.user?.login || 'admin';
+
+    const result = await pluginService.approvePluginRequest(id, adminUser);
+    
+    res.json({
+      success: true,
+      request: result.request,
+      plugin: result.plugin,
+      message: 'Plugin request approved and added to plugins'
+    });
+  } catch (error) {
+    console.error('Approve Plugin Request Error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to approve plugin request'
+    });
+  }
+});
+
+app.delete('/api/admin/plugin-requests/:id', authenticateAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const deletedRequest = await pluginService.deletePluginRequest(id);
+    
+    res.json({
+      success: true,
+      request: deletedRequest,
+      message: 'Plugin request deleted successfully'
+    });
+  } catch (error) {
+    console.error('Delete Plugin Request Error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to delete plugin request'
+    });
+  }
+});
+
+app.get('/api/admin/plugin-requests/download', authenticateAdmin, async (req, res) => {
+  try {
+    const requests = await pluginService.getAllPluginRequests();
+    
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Disposition', `attachment; filename="plugin-requests-${new Date().toISOString().split('T')[0]}.json"`);
+    res.json(requests);
+  } catch (error) {
+    console.error('Download Plugin Requests Error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to download plugin requests'
+    });
   }
 });
