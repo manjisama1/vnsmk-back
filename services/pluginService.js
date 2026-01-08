@@ -104,69 +104,36 @@ class PluginService {
             type: 'fun',
             gistLink: 'https://gist.github.com/weatherteam/weather-bot',
             likes: 34,
-            status: 'pending',
-            createdAt: new Date('2024-03-05').toISOString()
-          },
-          {
-            id: uuidv4(),
-            name: 'Instagram Downloader',
-            author: 'MediaBot',
-            description: 'Download Instagram posts, stories, reels, and IGTV videos with metadata',
-            type: 'media',
-            gistLink: 'https://gist.github.com/mediabot/instagram-downloader',
-            likes: 78,
             status: 'approved',
             createdAt: new Date('2024-02-10').toISOString()
           },
           {
             id: uuidv4(),
-            name: 'Custom Stickers',
-            author: 'StickerMaster',
-            description: 'Create personalized stickers from any image with automatic background removal',
-            type: 'sticker',
-            gistLink: 'https://gist.github.com/stickermaster/custom-stickers',
-            likes: 56,
+            name: 'Group Manager Pro',
+            author: 'AdminTools',
+            description: 'Advanced group management with auto-moderation, welcome messages, and member analytics',
+            type: 'admin',
+            gistLink: 'https://gist.github.com/admintools/group-manager-pro',
+            likes: 78,
             status: 'approved',
             createdAt: new Date('2024-01-25').toISOString()
-          },
-          {
-            id: uuidv4(),
-            name: 'TikTok Downloader',
-            author: 'MediaBot',
-            description: 'Download TikTok videos without watermark in high quality',
-            type: 'media',
-            gistLink: 'https://gist.github.com/mediabot/tiktok-downloader',
-            likes: 92,
-            status: 'approved',
-            createdAt: new Date('2024-03-01').toISOString()
-          },
-          {
-            id: uuidv4(),
-            name: 'Quote Generator',
-            author: 'WisdomBot',
-            description: 'Generate inspirational quotes with beautiful backgrounds and typography',
-            type: 'fun',
-            gistLink: 'https://gist.github.com/wisdombot/quote-generator',
-            likes: 41,
-            status: 'rejected',
-            createdAt: new Date('2024-02-15').toISOString()
           }
         ];
 
-        await fs.writeJson(this.pluginsFile, demoPlugins);
-        log.debug('Demo plugins loaded');
+        await fs.writeJson(this.pluginsFile, demoPlugins, { spaces: 2 });
+        log.success('Demo plugins loaded');
       }
     } catch (error) {
-      log.error('Error loading demo plugins:', error.message);
+      log.error('Demo plugins load failed:', error.message);
     }
   }
 
   async getAllPlugins() {
     await this.ensureInitialized();
     
-    // Check cache first
-    const cacheKey = 'all_plugins';
+    const cacheKey = 'all-plugins';
     const cached = this.cache.get(cacheKey);
+    
     if (cached && Date.now() - cached.timestamp < this.cacheTTL) {
       return cached.data;
     }
@@ -174,7 +141,7 @@ class PluginService {
     try {
       const plugins = await fs.readJson(this.pluginsFile);
       
-      // Cache the result
+      // Cache the results
       this.cache.set(cacheKey, {
         data: plugins,
         timestamp: Date.now()
@@ -182,7 +149,7 @@ class PluginService {
       
       return plugins;
     } catch (error) {
-      log.error('Error reading plugins:', error.message);
+      log.error('Get all plugins failed:', error.message);
       return [];
     }
   }
@@ -190,160 +157,183 @@ class PluginService {
   async getPlugins(filters = {}) {
     try {
       let plugins = await this.getAllPlugins();
-
-      // For regular users, show approved plugins and pending plugins (but mark them)
-      if (!filters.includeAll) {
-        plugins = plugins.filter(plugin => 
-          plugin.status === 'approved' || 
-          plugin.status === 'pending' || 
-          !plugin.status
-        );
-      }
-
-      // Apply type filter
+      
+      // Apply filters
       if (filters.type && filters.type !== 'all') {
         plugins = plugins.filter(plugin => plugin.type === filters.type);
       }
-
-      // Apply search filter
+      
+      if (filters.status) {
+        plugins = plugins.filter(plugin => plugin.status === filters.status);
+      } else if (!filters.includeAll) {
+        // By default, only return approved plugins for public API
+        plugins = plugins.filter(plugin => plugin.status === 'approved');
+      }
+      
       if (filters.search) {
         const searchTerm = filters.search.toLowerCase();
         plugins = plugins.filter(plugin =>
           plugin.name.toLowerCase().includes(searchTerm) ||
           plugin.description.toLowerCase().includes(searchTerm) ||
-          plugin.author.toLowerCase().includes(searchTerm)
+          plugin.author.toLowerCase().includes(searchTerm) ||
+          (plugin.tags && plugin.tags.some(tag => tag.toLowerCase().includes(searchTerm)))
         );
       }
-
+      
       // Apply sorting
-      switch (filters.sort) {
-        case 'recent':
-          plugins.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-          break;
-        case 'old':
-          plugins.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-          break;
-        case 'liked':
-          plugins.sort((a, b) => b.likes - a.likes);
-          break;
-        case 'az':
-          plugins.sort((a, b) => a.name.localeCompare(b.name));
-          break;
-        default:
-          plugins.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      if (filters.sort) {
+        switch (filters.sort) {
+          case 'likes':
+            plugins.sort((a, b) => (b.likes || 0) - (a.likes || 0));
+            break;
+          case 'recent':
+            plugins.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+            break;
+          case 'name':
+            plugins.sort((a, b) => a.name.localeCompare(b.name));
+            break;
+          default:
+            plugins.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+        }
       }
-
+      
       return plugins;
     } catch (error) {
-      log.error('Error getting plugins:', error.message);
-      throw error;
+      log.error('Get plugins failed:', error.message);
+      return [];
     }
   }
 
   async addPlugin(pluginData) {
+    await this.ensureInitialized();
+    
     try {
       const plugins = await this.getAllPlugins();
-
+      
       const newPlugin = {
         id: uuidv4(),
         ...pluginData,
-        likes: 0,
-        status: 'pending', // New plugins start as pending
-        createdAt: new Date().toISOString()
+        likes: pluginData.likes || 0,
+        status: pluginData.status || 'pending',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
       };
-
+      
       plugins.push(newPlugin);
-      await fs.writeJson(this.pluginsFile, plugins);
-
-      log.debug('Plugin added:', newPlugin.name);
+      await fs.writeJson(this.pluginsFile, plugins, { spaces: 2 });
+      
+      // Clear cache
+      this.cache.delete('all-plugins');
+      
+      log.success(`Plugin added: ${newPlugin.name} by ${newPlugin.author}`);
       return newPlugin;
     } catch (error) {
-      log.error('Error adding plugin:', error.message);
+      log.error('Add plugin failed:', error.message);
       throw error;
     }
   }
 
   async updatePluginStatus(pluginId, status) {
+    await this.ensureInitialized();
+    
     try {
       const plugins = await this.getAllPlugins();
       const pluginIndex = plugins.findIndex(plugin => plugin.id === pluginId);
-
+      
       if (pluginIndex === -1) {
         throw new Error('Plugin not found');
       }
-
+      
       plugins[pluginIndex].status = status;
       plugins[pluginIndex].updatedAt = new Date().toISOString();
-
-      await fs.writeJson(this.pluginsFile, plugins);
-
-      log.debug(`Plugin ${status}:`, plugins[pluginIndex].name);
-      return plugins[pluginIndex];
-    } catch (error) {
-      log.error('Error updating plugin status:', error.message);
-      throw error;
-    }
-  }
-
-  async likePlugin(pluginId, userId) {
-    try {
-      const plugins = await this.getAllPlugins();
-      const pluginIndex = plugins.findIndex(plugin => plugin.id === pluginId);
-
-      if (pluginIndex === -1) {
-        throw new Error('Plugin not found');
-      }
-
-      // Initialize likedBy array if it doesn't exist
-      if (!plugins[pluginIndex].likedBy) {
-        plugins[pluginIndex].likedBy = [];
-      }
-
-      // Check if user already liked this plugin
-      const hasLiked = plugins[pluginIndex].likedBy.includes(userId);
-
-      if (hasLiked) {
-        // Unlike: remove user from likedBy array and decrease likes
-        plugins[pluginIndex].likedBy = plugins[pluginIndex].likedBy.filter(id => id !== userId);
-        plugins[pluginIndex].likes = Math.max(0, plugins[pluginIndex].likes - 1);
-      } else {
-        // Like: add user to likedBy array and increase likes
-        plugins[pluginIndex].likedBy.push(userId);
-        plugins[pluginIndex].likes += 1;
-      }
-
+      
       await fs.writeJson(this.pluginsFile, plugins, { spaces: 2 });
+      
+      // Clear cache
+      this.cache.delete('all-plugins');
+      
+      log.success(`Plugin status updated: ${plugins[pluginIndex].name} -> ${status}`);
       return plugins[pluginIndex];
     } catch (error) {
-      log.error('Error liking plugin:', error.message);
+      log.error('Update plugin status failed:', error.message);
       throw error;
     }
   }
 
   async deletePlugin(pluginId) {
+    await this.ensureInitialized();
+    
     try {
       const plugins = await this.getAllPlugins();
-      const filteredPlugins = plugins.filter(plugin => plugin.id !== pluginId);
-
-      if (plugins.length === filteredPlugins.length) {
+      const pluginIndex = plugins.findIndex(plugin => plugin.id === pluginId);
+      
+      if (pluginIndex === -1) {
         throw new Error('Plugin not found');
       }
-
-      await fs.writeJson(this.pluginsFile, filteredPlugins);
-      log.debug('Plugin deleted:', pluginId);
-
-      return true;
+      
+      const deletedPlugin = plugins.splice(pluginIndex, 1)[0];
+      await fs.writeJson(this.pluginsFile, plugins, { spaces: 2 });
+      
+      // Clear cache
+      this.cache.delete('all-plugins');
+      
+      log.success(`Plugin deleted: ${deletedPlugin.name}`);
+      return deletedPlugin;
     } catch (error) {
-      log.error('Error deleting plugin:', error.message);
+      log.error('Delete plugin failed:', error.message);
+      throw error;
+    }
+  }
+
+  async likePlugin(pluginId, userId) {
+    await this.ensureInitialized();
+    
+    try {
+      const plugins = await this.getAllPlugins();
+      const pluginIndex = plugins.findIndex(plugin => plugin.id === pluginId);
+      
+      if (pluginIndex === -1) {
+        throw new Error('Plugin not found');
+      }
+      
+      // Initialize likes array if it doesn't exist
+      if (!plugins[pluginIndex].likedBy) {
+        plugins[pluginIndex].likedBy = [];
+      }
+      
+      const hasLiked = plugins[pluginIndex].likedBy.includes(userId);
+      
+      if (hasLiked) {
+        // Unlike
+        plugins[pluginIndex].likedBy = plugins[pluginIndex].likedBy.filter(id => id !== userId);
+        plugins[pluginIndex].likes = Math.max(0, (plugins[pluginIndex].likes || 0) - 1);
+      } else {
+        // Like
+        plugins[pluginIndex].likedBy.push(userId);
+        plugins[pluginIndex].likes = (plugins[pluginIndex].likes || 0) + 1;
+      }
+      
+      plugins[pluginIndex].updatedAt = new Date().toISOString();
+      await fs.writeJson(this.pluginsFile, plugins, { spaces: 2 });
+      
+      // Clear cache
+      this.cache.delete('all-plugins');
+      
+      log.debug(`Plugin ${hasLiked ? 'unliked' : 'liked'}: ${plugins[pluginIndex].name}`);
+      return plugins[pluginIndex];
+    } catch (error) {
+      log.error('Like plugin failed:', error.message);
       throw error;
     }
   }
 
   async updatePlugin(pluginId, updateData) {
+    await this.ensureInitialized();
+    
     try {
       const plugins = await this.getAllPlugins();
       const pluginIndex = plugins.findIndex(plugin => plugin.id === pluginId);
-
+      
       if (pluginIndex === -1) {
         throw new Error('Plugin not found');
       }
@@ -363,9 +353,7 @@ class PluginService {
       throw error;
     }
   }
-}
 
-export default PluginService;
   // Plugin Requests Management
   async addPluginRequest(pluginData) {
     await this.ensureInitialized();
@@ -513,6 +501,7 @@ export default PluginService;
     log.success(`Plugin approved and added: ${plugin.name}`);
     return { request, plugin };
   }
+
   // Find approved plugin by various criteria
   async findApprovedPlugin(criteria) {
     const plugins = await this.getAllPlugins();
@@ -598,3 +587,6 @@ export default PluginService;
       approvedPlugin: approvedPlugin ? { id: approvedPlugin.id, name: approvedPlugin.name } : null
     };
   }
+}
+
+export default PluginService;
