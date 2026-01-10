@@ -110,10 +110,10 @@ class WhatsAppService {
     }
 
     createSocket(state, version, isPairing = false) {
-        // Use different browser configurations for QR vs Pairing
+        
         const browser = isPairing 
-            ? Browsers.macOS('Safari')  // Official helper for pairing mode
-            : ["manji", "Safari", "15.0"];  // Custom for QR mode
+            ? Browsers.macOS('Safari')
+            : ["manji", "Safari", "15.0"];
 
         const sock = makeWASocket({
             version,
@@ -126,8 +126,8 @@ class WhatsAppService {
             retryRequestDelayMs: 250,
             maxMsgRetryCount: 3,
             printQRInTerminal: false,
-            syncFullHistory: false,  // Disable history sync for performance
-            shouldSyncHistoryMessage: () => false,  // Disable history sync
+            syncFullHistory: false,
+            shouldSyncHistoryMessage: () => false,
             getMessage: async () => undefined
         });
         return sock;

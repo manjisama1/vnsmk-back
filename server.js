@@ -968,7 +968,11 @@ app.get('/api/admin/plugins', verifyAdmin, async (req, res) => {
     const pluginRequests = await pluginService.getAllPluginRequests();
     res.json({
       success: true,
-      plugins: pluginRequests // Return requests as "plugins" for frontend compatibility
+      plugins: pluginRequests.map(request => ({
+        ...request,
+        source: 'backend',
+        status: request.status || 'pending'
+      })) // Return requests as "plugins" for frontend compatibility
     });
   } catch (error) {
     console.error('Admin Plugin Requests Error:', error);
@@ -1003,25 +1007,18 @@ app.delete('/api/admin/plugins/:id', verifyAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     
-    const result = await pluginService.deletePluginCompletely(id);
+    const deletedRequest = await pluginService.deletePluginRequest(id);
     
-    if (result.deletedFromRequests || result.deletedFromApproved) {
-      res.json({
-        success: true,
-        message: 'Plugin deleted successfully',
-        ...result
-      });
-    } else {
-      res.status(404).json({
-        success: false,
-        error: 'Plugin not found in either requests or approved plugins'
-      });
-    }
+    res.json({
+      success: true,
+      message: 'Plugin request deleted successfully',
+      request: deletedRequest
+    });
   } catch (error) {
-    console.error('Admin Delete Plugin Error:', error);
+    console.error('Admin Delete Plugin Request Error:', error);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to delete plugin'
+      error: error.message || 'Failed to delete plugin request'
     });
   }
 });
@@ -1105,10 +1102,20 @@ app.get('/api/faqs', async (req, res) => {
 app.get('/api/public-data', async (req, res) => {
   try {
     // Fetch all public data in parallel
-    const [faqs, plugins] = await Promise.all([
+    const [faqs, pluginRequests] = await Promise.all([
       faqService.getAllFAQs(),
-      pluginService.getPlugins({ includeAll: false }) // Only approved plugins
+      pluginService.getAllPluginRequests() // Get plugin requests
     ]);
+
+    // Only show approved and pending plugin requests in public view
+    // Exclude rejected plugins from public view
+    const publicPluginRequests = pluginRequests
+      .filter(request => request.status !== 'rejected')
+      .map(request => ({
+        ...request,
+        source: 'backend', // Mark as backend source
+        status: request.status || 'pending' // Ensure status is set
+      }));
 
     // Extract categories from FAQs
     const categories = ['All', ...new Set(faqs.map(faq => faq.category))];
@@ -1116,7 +1123,7 @@ app.get('/api/public-data', async (req, res) => {
     res.json({
       success: true,
       faqs,
-      plugins,
+      plugins: publicPluginRequests,
       categories,
       timestamp: new Date().toISOString(),
       cacheFor: 30 * 60 * 1000 // 30 minutes
@@ -1135,16 +1142,16 @@ app.get('/api/public-data', async (req, res) => {
 app.get('/api/admin-data', verifyAdmin, async (req, res) => {
   try {
     // Fetch all admin data in parallel
-    const [stats, sessions, faqs, plugins] = await Promise.all([
+    const [stats, sessions, faqs, pluginRequests] = await Promise.all([
       // Stats
       (async () => {
         const allSessions = await whatsappService.getAllSessions();
-        const allPlugins = await pluginService.getAllPlugins();
+        const allRequests = await pluginService.getAllPluginRequests();
         return {
           totalSessions: allSessions.length,
           activeSessions: allSessions.filter(s => s.connected).length,
-          totalPlugins: allPlugins.length,
-          pendingPlugins: allPlugins.filter(p => p.status === 'pending').length,
+          totalPlugins: 0, // Plugins are now managed in frontend permanentPlugins.js
+          pendingPlugins: allRequests.filter(r => r.status === 'pending').length,
           totalFAQs: (await faqService.getAllFAQs()).length
         };
       })(),
@@ -1155,16 +1162,24 @@ app.get('/api/admin-data', verifyAdmin, async (req, res) => {
       // FAQs
       faqService.getAllFAQs(),
 
-      // Plugins (all including pending)
-      pluginService.getPlugins({ includeAll: true })
+      // Plugin Requests (for admin management)
+      pluginService.getAllPluginRequests()
     ]);
+
+    // Format plugin requests for admin view
+    const allPlugins = pluginRequests.map(request => ({
+      ...request,
+      source: 'backend',
+      status: request.status || 'pending'
+    }));
 
     res.json({
       success: true,
       stats,
       sessions,
       faqs,
-      plugins,
+      plugins: allPlugins,
+      pluginRequests, // Separate access to raw requests for admin operations
       timestamp: new Date().toISOString(),
       cacheFor: 5 * 60 * 1000 // 5 minutes for admin data
     });
@@ -1456,33 +1471,6 @@ app.post('/api/plugins', async (req, res) => {
     res.status(500).json({
       success: false,
       error: error.message || 'Failed to submit plugin request'
-    });
-  }
-});
-
-app.post('/api/plugins/:id/like', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { userId } = req.body;
-
-    if (!userId) {
-      return res.status(400).json({
-        success: false,
-        error: 'User ID required'
-      });
-    }
-
-    const plugin = await pluginService.likePlugin(id, userId);
-
-    res.json({
-      success: true,
-      plugin
-    });
-  } catch (error) {
-    console.error('Like Plugin Error:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message || 'Failed to like plugin'
     });
   }
 });
